@@ -15,12 +15,12 @@
     "fixture": "bun run scripts/make-fixture.ts"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.20.0",
-    "zod": "^3.25.76"
+    "@modelcontextprotocol/sdk": "^1.30.0",
+    "zod": "^4.4.3"
   },
   "devDependencies": {
     "@types/bun": "latest",
-    "typescript": "^5.9.0"
+    "typescript": "^7.0.2"
   },
   "engines": {
     "bun": ">=1.1.0"
@@ -29,5 +29,8 @@
     "bin",
     "src",
     "README.md"
-  ]
+  ],
+  "overrides": {
+    "zod": "$zod"
+  }
 }
