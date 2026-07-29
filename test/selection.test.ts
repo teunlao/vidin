@@ -9,9 +9,8 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { analyze } from '../src/core/pipeline.ts';
+import { FIXTURE, ensureFixture } from './support/fixture.ts';
 import type { Manifest } from '../src/core/types.ts';
-
-const FIXTURE = join(import.meta.dir, '..', 'fixtures', 'screen-bug.mp4');
 
 /** Events staged in the fixture, in seconds. */
 const EVENTS = { panel: 6, dialog: 9.5, toast: 14, dialogClosed: 16 };
@@ -25,14 +24,7 @@ let manifest: Manifest;
 let dir: string;
 
 beforeAll(async () => {
-  if (!(await Bun.file(FIXTURE).exists())) {
-    const build = Bun.spawn({
-      cmd: ['bun', 'run', join(import.meta.dir, '..', 'scripts', 'make-fixture.ts')],
-      stdout: 'pipe',
-      stderr: 'pipe',
-    });
-    if ((await build.exited) !== 0) throw new Error(await new Response(build.stderr).text());
-  }
+  await ensureFixture();
   dir = await mkdtemp(join(tmpdir(), 'vidin-test-'));
   manifest = (await analyze({ source: FIXTURE, outDir: dir })).manifest;
 }, 120_000);
@@ -48,18 +40,6 @@ test('every staged UI event produces one frame, shortly after it happens', () =>
     );
     expect(matches.length, `${name} at ${at}s should produce exactly one frame`).toBe(1);
     expect(matches[0]!.reason).toBe('settled');
-  }
-});
-
-test('the settled frame shows the state after the change, not mid-animation', () => {
-  // Every event frame lands after its trigger, never before it.
-  for (const [name, at] of Object.entries(EVENTS)) {
-    const frame = manifest.frames.find(
-      (f) => f.timeMs >= at * 1000 && f.timeMs <= (at + 1.5) * 1000,
-    );
-    expect(frame!.timeMs, `${name} frame must come after the change started`).toBeGreaterThanOrEqual(
-      at * 1000,
-    );
   }
 });
 

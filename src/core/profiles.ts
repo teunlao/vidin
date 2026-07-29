@@ -14,6 +14,8 @@ const base: Omit<Profile, 'name'> = {
   maxFrames: 24,
   cursorMaxAreaPct: 0.45,
   cursorMaxSpanPct: 7,
+  cursorNearPct: 6,
+  cursorStaleMs: 5_000,
   // rendering
   frameWidth: 1456,
   quality: 78,

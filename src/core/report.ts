@@ -96,13 +96,19 @@ export function buildReport(manifest: Manifest): string {
 export function describeFrame(frame: SelectedFrame): string {
   if (frame.reason === 'start') return 'first frame';
   if (frame.reason === 'end') return 'final state';
-  if (frame.reason === 'anchor') return 'still, kept as an anchor';
-  if (frame.scrolling) return 'scrolling';
-  if (frame.regions.length === 0) return frame.reason === 'ongoing' ? 'still changing' : 'minor change';
+  if (frame.reason === 'anchor') return 'time passing, screen nearly unchanged';
 
-  const parts = frame.regions.map(describeRect);
-  const prefix = frame.reason === 'ongoing' ? 'mid-change: ' : '';
-  return prefix + parts.join('; ');
+  if (frame.regions.length === 0) {
+    if (frame.scrolling) return 'scrolling';
+    return frame.reason === 'ongoing' ? 'still changing' : 'minor change';
+  }
+
+  const drawn = frame.regions.length;
+  const found = Math.max(frame.regionsFound, drawn);
+  const extra = found > drawn ? ` (+${found - drawn} more area${found - drawn > 1 ? 's' : ''})` : '';
+  const where = frame.regions.map(describeRect).join('; ') + extra;
+  if (frame.scrolling) return `scrolling; ${where}`;
+  return frame.reason === 'ongoing' ? `mid-change: ${where}` : where;
 }
 
 /** Turn a normalized rect into words an agent can act on without opening the image. */

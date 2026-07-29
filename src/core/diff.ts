@@ -192,12 +192,13 @@ export function estimateScroll(
   a: Uint8Array,
   b: Uint8Array,
   size: FrameSize,
-  maxShiftPct = 0.35,
+  /** Largest shift to consider, as a FRACTION of frame height (not a percent). */
+  maxShiftFraction = 0.35,
 ): number {
   const { width, height } = size;
   const pa = rowProfile(a, width, height);
   const pb = rowProfile(b, width, height);
-  const maxShift = Math.max(2, Math.round(height * maxShiftPct));
+  const maxShift = Math.max(2, Math.round(height * maxShiftFraction));
 
   const zero = profileError(pa, pb, 0, height);
   let best = 0;

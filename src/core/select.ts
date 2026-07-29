@@ -14,10 +14,20 @@
  *      position is tracked and drawn on the frames that are kept.
  *   4. Guard rails keep the timeline honest: a minimum gap, a maximum gap, and
  *      periodic samples while a long animation is still running.
+ *
+ * Two invariants hold no matter which path a frame took through here:
+ *
+ *   A. The reference frame only ever advances by EMITTING. No path folds a
+ *      changed screen into the reference silently — that would make the change
+ *      unrecoverable, because every later diff would then measure zero against
+ *      a state the reader never sees.
+ *   B. Every frame's deltaPct/regions/cursorFrom describe its neighbour in the
+ *      FINAL list. They are relinked after pruning, so neither the drawn box nor
+ *      the report can claim a change against a frame that was dropped.
  */
 
 import { area, blobCenter, blobToRect, blobs, diffGrid, estimateScroll } from './diff.ts';
-import type { Blob, FrameSize, Grid } from './diff.ts';
+import type { FrameSize, Grid } from './diff.ts';
 import { analysisSize, sample } from './sample.ts';
 import type { Point, Rect, SelectedFrame, SelectionParams, VideoMeta } from './types.ts';
 
@@ -30,49 +40,77 @@ export interface SelectionResult {
 
 type State = 'rest' | 'changing';
 
+/** A kept frame plus the analysis pixels behind it, so deltas can be relinked. */
+interface Candidate {
+  frame: SelectedFrame;
+  pixels: Uint8Array;
+}
+
 export async function selectFrames(
   meta: VideoMeta,
   params: SelectionParams,
   onProgress?: (sampled: number, selected: number) => void,
 ): Promise<SelectionResult> {
   const size = analysisSize(meta, params.analysisWidth);
-  const picked: SelectedFrame[] = [];
+  const candidates: Candidate[] = [];
+  // Relinking needs the analysis pixels of every kept frame, so the list is
+  // trimmed as it grows rather than only at the end — otherwise an hour-long
+  // recording would hold thousands of buffers before the budget is applied.
+  const softCap = Math.max(params.maxFrames * 3, params.maxFrames + 8);
 
   let previous: Uint8Array | null = null;
   let reference: Uint8Array | null = null;
   let referenceTimeMs = 0;
   let state: State = 'rest';
   let calmRun = 0;
-  let changeStartedMs = 0;
   let lastOngoingMs = 0;
+  let episodeScrolling = false;
   let sampled = 0;
+  let pruned = 0;
   let cursor: Point | undefined;
-  let cursorAtReference: Point | undefined;
+  let cursorSeenMs = Number.NEGATIVE_INFINITY;
   let lastSample: Sampled | null = null;
+
+  /** The pointer is only reported while the sighting is recent. */
+  const freshCursor = (timeMs: number): Point | undefined =>
+    timeMs - cursorSeenMs <= params.cursorStaleMs ? cursor : undefined;
 
   const emit = (
     timeMs: number,
     reason: SelectedFrame['reason'],
+    pixels: Uint8Array,
     grid: Grid | null,
     scrolling: boolean,
   ) => {
-    const regions = grid ? significantRegions(grid) : [];
+    const stored = pixels.slice();
+    const found = grid ? significantRegions(grid) : { regions: [], total: 0 };
+    const regions = found.regions;
     const deltaPct = grid ? grid.changedPct : 0;
-    picked.push({
-      index: 0,
-      timeMs,
-      deltaPct,
-      reason,
-      regions,
-      cursor,
-      cursorFrom: cursorAtReference,
-      scrolling,
-      score: rank(reason, deltaPct, regions),
+    candidates.push({
+      frame: {
+        index: 0,
+        timeMs,
+        deltaPct,
+        reason,
+        regions,
+        regionsFound: found.total,
+        cursor: freshCursor(timeMs),
+        cursorFrom: candidates.at(-1)?.frame.cursor,
+        scrolling,
+        score: rank(reason, deltaPct, regions),
+      },
+      pixels: stored,
     });
-    cursorAtReference = cursor;
+
+    // Invariant A: the reference is exactly the last emitted frame.
+    reference = stored;
     referenceTimeMs = timeMs;
     lastOngoingMs = timeMs;
-    onProgress?.(sampled, picked.length);
+
+    if (candidates.length > softCap) {
+      pruned += prune(candidates, Math.max(params.maxFrames, 2));
+    }
+    onProgress?.(sampled, candidates.length);
   };
 
   for await (const frame of sample(meta, size, params.sampleFps)) {
@@ -80,26 +118,26 @@ export async function selectFrames(
     lastSample = { timeMs: frame.timeMs, pixels: frame.pixels };
 
     if (!reference || !previous) {
-      reference = frame.pixels.slice();
       previous = frame.pixels.slice();
-      emit(frame.timeMs, 'start', null, false);
+      emit(frame.timeMs, 'start', frame.pixels, null, false);
       continue;
     }
 
     const vsPrevious = diffGrid(frame.pixels, previous, size, params.pixelThreshold);
     const vsReference = diffGrid(frame.pixels, reference, size, params.pixelThreshold);
 
-    // Track the cursor from frame-to-frame motion, and decide whether this
-    // sample is *only* the cursor moving.
-    const motion = classifyMotion(vsPrevious, params, cursor);
-    if (motion.cursor) cursor = motion.cursor;
+    // Track the pointer from frame-to-frame motion, and decide whether this
+    // sample is *only* the pointer moving.
+    const motion = classifyMotion(vsPrevious, params, freshCursor(frame.timeMs));
+    if (motion.cursor) {
+      cursor = motion.cursor;
+      cursorSeenMs = frame.timeMs;
+    }
 
-    const referenceMotion = classifyMotion(vsReference, params, cursor);
-    const realChangePct = referenceMotion.cursorOnly ? 0 : vsReference.changedPct;
     const calmPct = motion.cursorOnly ? 0 : vsPrevious.changedPct;
-    const scrolling = calmPct > params.enterPct
-      ? estimateScroll(frame.pixels, previous, size) !== 0
-      : false;
+    const realChangePct = classifyMotion(vsReference, params, freshCursor(frame.timeMs)).cursorOnly
+      ? 0
+      : vsReference.changedPct;
 
     const sinceReference = frame.timeMs - referenceTimeMs;
     const canEmit = sinceReference >= params.minGapMs;
@@ -107,63 +145,70 @@ export async function selectFrames(
     if (state === 'rest') {
       if (realChangePct >= params.enterPct) {
         state = 'changing';
-        changeStartedMs = frame.timeMs;
-        lastOngoingMs = frame.timeMs;
         calmRun = 0;
+        // The periodic-sample clock starts with the episode. Leaving it at the
+        // previous emit makes the very first sample of a change look overdue,
+        // and fires an `ongoing` frame in the middle of the animation — the one
+        // frame this selector exists to avoid.
+        lastOngoingMs = frame.timeMs;
+        // Decided once, at the start of the episode. A per-sample flag could
+        // never be true on a settled frame: settling requires a calm sample and
+        // scrolling requires a busy one, so the two can never coincide.
+        episodeScrolling = estimateScroll(frame.pixels, previous, size) !== 0;
       } else if (sinceReference >= params.maxIntervalMs) {
-        reference = frame.pixels.slice();
-        emit(frame.timeMs, 'anchor', vsReference, false);
+        // A still screen does not deserve a duplicate of the frame already
+        // kept; only a screen that drifted below the event threshold does.
+        if (vsReference.changedPct > 0) {
+          emit(frame.timeMs, 'anchor', frame.pixels, vsReference, false);
+        } else {
+          referenceTimeMs = frame.timeMs;
+        }
       }
     } else {
       calmRun = calmPct <= params.settlePct ? calmRun + 1 : 0;
+      if (calmPct > params.enterPct && estimateScroll(frame.pixels, previous, size) !== 0) {
+        episodeScrolling = true;
+      }
+
       const settled = calmRun >= params.settleFrames;
-      const ongoingBudget = scrolling ? params.ongoingMs * 2 : params.ongoingMs;
-      const runningLong = frame.timeMs - lastOngoingMs >= ongoingBudget;
+      const ongoingBudget = episodeScrolling ? params.ongoingMs * 2 : params.ongoingMs;
 
       if (settled && canEmit) {
         state = 'rest';
         calmRun = 0;
-        const settledGrid = diffGrid(frame.pixels, reference, size, params.pixelThreshold);
-        reference = frame.pixels.slice();
-        emit(frame.timeMs, 'settled', settledGrid, scrolling);
+        emit(frame.timeMs, 'settled', frame.pixels, vsReference, episodeScrolling);
       } else if (settled) {
-        // Settled, but too close to the previous frame — fold it into the
-        // reference so the next event is measured from here.
-        state = 'rest';
-        calmRun = 0;
-        reference = frame.pixels.slice();
-        referenceTimeMs = frame.timeMs;
-      } else if (runningLong && canEmit) {
-        const ongoingGrid = diffGrid(frame.pixels, reference, size, params.pixelThreshold);
-        reference = frame.pixels.slice();
-        emit(frame.timeMs, 'ongoing', ongoingGrid, scrolling);
-      } else if (frame.timeMs - changeStartedMs >= params.maxIntervalMs) {
-        // A change that never settles (video playing, spinner): stop waiting.
-        state = 'rest';
-        calmRun = 0;
-        reference = frame.pixels.slice();
-        referenceTimeMs = frame.timeMs;
+        // Settled, but too soon after the previous kept frame. Hold the state
+        // and let the next calm sample past minGapMs emit it. Folding it into
+        // the reference here would destroy the event outright (invariant A).
+      } else if (frame.timeMs - lastOngoingMs >= ongoingBudget && canEmit) {
+        emit(frame.timeMs, 'ongoing', frame.pixels, vsReference, episodeScrolling);
       }
     }
 
     previous.set(frame.pixels);
   }
 
-  // The final state of the screen is where a bug report usually ends up.
-  if (lastSample && reference && lastSample.timeMs - referenceTimeMs >= params.minGapMs) {
+  // Where a bug report ends up is usually the point of it, so the final state is
+  // kept whenever it differs at all — a clip shorter than minGapMs would
+  // otherwise show nothing but its first frame.
+  if (lastSample && reference && lastSample.timeMs > referenceTimeMs) {
     const grid = diffGrid(lastSample.pixels, reference, size, params.pixelThreshold);
-    emit(lastSample.timeMs, 'end', grid, false);
-  } else if (picked.length > 1) {
-    picked[picked.length - 1]!.reason = 'end';
+    if (grid.changedPct > 0 || lastSample.timeMs - referenceTimeMs >= params.minGapMs) {
+      emit(lastSample.timeMs, 'end', lastSample.pixels, grid, false);
+    }
   }
+  if (candidates.length > 1) candidates.at(-1)!.frame.reason = 'end';
 
-  const before = picked.length;
-  const frames = prune(picked, params.maxFrames);
-  frames.forEach((frame, i) => {
-    frame.index = i + 1;
+  pruned += prune(candidates, params.maxFrames);
+  relink(candidates, size, params.pixelThreshold);
+
+  const frames = candidates.map((candidate, i) => {
+    candidate.frame.index = i + 1;
+    return candidate.frame;
   });
 
-  return { frames, sampledFrames: sampled, prunedFrames: before - frames.length, size };
+  return { frames, sampledFrames: sampled, prunedFrames: pruned, size };
 }
 
 interface Sampled {
@@ -177,9 +222,16 @@ interface Motion {
 }
 
 /**
- * Decide whether a diff is just the mouse pointer moving. A pointer produces
- * one or two small blobs — the spot it left and the spot it arrived at — and
- * almost no total area. Anything bigger is a real change.
+ * Decide whether a diff is just the mouse pointer moving.
+ *
+ * Size alone is not evidence. A blinking text caret, a spinner, a filling
+ * progress bar and a ticking counter are all small and compact, and calling any
+ * of them "pointer noise" makes them invisible twice over: the change is
+ * discounted on the way in, and the screen is simultaneously reported as calm.
+ * So a positional argument is required as well — either a blob sitting where
+ * the pointer last was (the spot it is leaving), or, when no pointer is known
+ * yet, the two-blob leave-and-arrive signature that a moving pointer produces
+ * and a blinking caret does not.
  */
 function classifyMotion(
   grid: Grid,
@@ -201,44 +253,59 @@ function classifyMotion(
     if (blob.r1 - blob.r0 + 1 > maxSpanRows) return { cursorOnly: false };
   }
 
-  return { cursorOnly: true, cursor: pickCursorBlob(found, grid, previousCursor) };
+  const centers = found.map((blob) => blobCenter(blob, grid));
+  if (previousCursor) {
+    const near = params.cursorNearPct / 100;
+    if (!centers.some((c) => distance(c, previousCursor) <= near)) return { cursorOnly: false };
+  } else if (found.length < 2) {
+    return { cursorOnly: false };
+  }
+
+  return { cursorOnly: true, cursor: pickCursorBlob(centers, previousCursor) };
 }
 
 /**
- * Of the small blobs, the one nearest the previous cursor position is where the
+ * Of the small blobs, the one nearest the previous pointer position is where the
  * pointer *was*; the other one is where it is now.
  */
-function pickCursorBlob(found: Blob[], grid: Grid, previous: Point | undefined): Point {
-  const centers = found.map((blob) => blobCenter(blob, grid));
+function pickCursorBlob(centers: Point[], previous: Point | undefined): Point {
   if (centers.length === 1 || !previous) return centers[0]!;
 
   let departedIndex = 0;
   let bestDistance = Number.POSITIVE_INFINITY;
   centers.forEach((center, i) => {
-    const distance = Math.hypot(center.x - previous.x, center.y - previous.y);
-    if (distance < bestDistance) {
-      bestDistance = distance;
+    const gap = distance(center, previous);
+    if (gap < bestDistance) {
+      bestDistance = gap;
       departedIndex = i;
     }
   });
 
-  const arrived = centers.find((_, i) => i !== departedIndex);
-  return arrived ?? centers[0]!;
+  return centers.find((_, i) => i !== departedIndex) ?? centers[0]!;
 }
 
-/** Change boxes worth drawing: drop cursor-sized specks when a real region exists. */
-function significantRegions(grid: Grid): Rect[] {
+/**
+ * Change boxes worth drawing: drop cursor-sized specks when a real region
+ * exists, and report how many survived that filter even though only the largest
+ * few are drawn.
+ */
+const MAX_DRAWN_REGIONS = 3;
+
+function significantRegions(grid: Grid): { regions: Rect[]; total: number } {
   const found = blobs(grid, 4);
-  if (found.length === 0) return [];
+  if (found.length === 0) return { regions: [], total: 0 };
 
   const totalCells = grid.cols * grid.rows;
   const minCells = Math.max(3, Math.round(totalCells * 0.0025));
   const big = found.filter((blob) => area(blob) >= minCells);
-  const kept = (big.length ? big : found.slice(0, 1)).slice(0, 3);
-  return kept.map((blob) => blobToRect(blob, grid));
+  const kept = big.length ? big : found.slice(0, 1);
+  return {
+    regions: kept.slice(0, MAX_DRAWN_REGIONS).map((blob) => blobToRect(blob, grid)),
+    total: kept.length,
+  };
 }
 
-function rank(reason: SelectedFrame['reason'], deltaPct: number, regions: Rect[]): number {
+function rank(reason: SelectedFrame['reason'], deltaPct: number, regions: readonly Rect[]): number {
   const base: Record<SelectedFrame['reason'], number> = {
     start: 1000,
     end: 1000,
@@ -253,29 +320,69 @@ function rank(reason: SelectedFrame['reason'], deltaPct: number, regions: Rect[]
 }
 
 /**
+ * Recompute each frame's difference against the frame that actually precedes it
+ * in the final list. Pruning removes frames from the middle, and without this
+ * the survivors keep describing neighbours that are no longer there — the report
+ * would understate the change exactly where the most happened, and the drawn box
+ * would imply the rest of it had already been visible.
+ */
+function relink(candidates: Candidate[], size: FrameSize, threshold: number): void {
+  for (let i = 0; i < candidates.length; i++) {
+    const current = candidates[i]!;
+    if (i === 0) {
+      current.frame.deltaPct = 0;
+      current.frame.regions = [];
+      current.frame.regionsFound = 0;
+      current.frame.cursorFrom = undefined;
+      continue;
+    }
+    const before = candidates[i - 1]!;
+    const grid = diffGrid(current.pixels, before.pixels, size, threshold);
+    const found = significantRegions(grid);
+    current.frame.deltaPct = grid.changedPct;
+    current.frame.regions = found.regions;
+    current.frame.regionsFound = found.total;
+    current.frame.cursorFrom = before.frame.cursor;
+  }
+}
+
+/**
  * Enforce the frame budget. Frames are removed one at a time, always the one
  * whose loss costs least: low score and close in time to its surviving
  * neighbours, so the timeline keeps its spread instead of collapsing into the
- * busiest few seconds.
+ * busiest few seconds. Returns how many were removed.
  */
-function prune(frames: SelectedFrame[], maxFrames: number): SelectedFrame[] {
-  if (frames.length <= maxFrames) return frames;
-  const kept = [...frames];
+function prune(candidates: Candidate[], maxFrames: number): number {
+  if (candidates.length <= maxFrames) return 0;
 
-  while (kept.length > maxFrames) {
+  // The loop below protects the first and last entries, so a budget below two
+  // has to be honoured explicitly instead of silently returning two frames.
+  // The final state is the more useful single frame for a bug report.
+  if (maxFrames <= 1) {
+    const removed = candidates.length - 1;
+    candidates.splice(0, removed);
+    return removed;
+  }
+
+  let removed = 0;
+  while (candidates.length > maxFrames) {
     let victim = -1;
     let victimCost = Number.POSITIVE_INFINITY;
-    for (let i = 1; i < kept.length - 1; i++) {
-      const gap = (kept[i + 1]!.timeMs - kept[i - 1]!.timeMs) / 1000;
-      const cost = kept[i]!.score * Math.log1p(gap);
+    for (let i = 1; i < candidates.length - 1; i++) {
+      const gap = (candidates[i + 1]!.frame.timeMs - candidates[i - 1]!.frame.timeMs) / 1000;
+      const cost = candidates[i]!.frame.score * Math.log1p(gap);
       if (cost < victimCost) {
         victimCost = cost;
         victim = i;
       }
     }
     if (victim < 0) break;
-    kept.splice(victim, 1);
+    candidates.splice(victim, 1);
+    removed++;
   }
+  return removed;
+}
 
-  return kept;
+function distance(a: Point, b: Point): number {
+  return Math.hypot(a.x - b.x, a.y - b.y);
 }

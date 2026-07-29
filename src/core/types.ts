@@ -41,6 +41,12 @@ export interface SelectedFrame {
   reason: FrameReason;
   /** Regions that changed since the previous selected frame, largest first. */
   regions: Rect[];
+  /**
+   * How many distinct regions were found. `regions` is capped so the frame stays
+   * readable, and without this the caption would quietly imply the cap was all
+   * there was.
+   */
+  regionsFound: number;
   /** Estimated cursor position at this moment, when it could be tracked. */
   cursor?: Point;
   /** Where the cursor was at the previously selected frame. */
@@ -76,6 +82,14 @@ export interface SelectionParams {
   cursorMaxAreaPct: number;
   /** A blob wider/taller than this percent of the frame is not a cursor. */
   cursorMaxSpanPct: number;
+  /**
+   * How close (percent of the frame) a blob must be to the last known pointer
+   * position to count as that pointer leaving. Without this test, any small
+   * compact change — a caret, a spinner, a progress bar — passes as cursor noise.
+   */
+  cursorNearPct: number;
+  /** After this long without a sighting, the pointer is no longer reported. */
+  cursorStaleMs: number;
 }
 
 export interface RenderParams {

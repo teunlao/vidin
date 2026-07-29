@@ -7,25 +7,31 @@ arrives as a screen recording, the video is dead weight — someone has to watch
 and retype what happened. vidin converts the recording into a small set of
 annotated keyframes plus a written timeline, and exposes that to agents over MCP.
 
-TypeScript on Bun. The only runtime dependency is `ffmpeg`; there is no build
-step and no native image library.
+TypeScript on Bun. The only runtime dependency is `ffmpeg` (plus `yt-dlp`, and
+only if you hand it a URL); there is no build step and no native image library.
 
 ---
 
 ## The idea: pick frames, don't slice them
 
 One screenshot per second is the obvious approach and it does not work. Three
-minutes of video becomes 180 frames ≈ **285k vision tokens**, and roughly 90% of
-them are identical because the person was reading, thinking, or moving the mouse.
+minutes of 1080p video becomes 180 frames, and Claude charges `width × height /
+750` tokens per image: `1920 × 1080 / 750 = 2765` each, so **~498k vision
+tokens** — more than the context most agents are given. Even downscaled to the
+1456px vidin uses, it is ~285k. And roughly 90% of those frames are identical,
+because the person was reading, thinking, or moving the mouse.
 
 vidin is event driven instead. It walks the video at 4 fps in downscaled RGB and
 keeps a frame only when something actually happened:
 
 - **Change is measured against the last *kept* frame**, not the previous sample,
   so slow drift accumulates instead of hiding under the threshold.
-- **Cursor movement never spends a frame.** A pointer produces one or two tiny
-  blobs and almost no total area; that signature is recognised, the position is
-  tracked, and the frame budget is left alone.
+- **Cursor movement does not spend a frame.** A pointer produces one or two tiny
+  blobs and almost no total area — but so do a blinking caret, a spinner and a
+  progress bar, so size alone is not accepted as evidence. A blob must also sit
+  where the pointer last was, or show the two-blob leave-and-arrive signature.
+  Get this wrong and the small stuff becomes invisible: it is discounted on the
+  way in *and* reported as a calm screen.
 - **Frames land after the change, not inside it.** When motion starts, nothing is
   emitted yet — the selector waits for the screen to come to rest and keeps the
   settled frame. You get the state *after* the click, not the animation blur.
@@ -37,8 +43,22 @@ keeps a frame only when something actually happened:
   budget that drops the least informative frames first while keeping the ends of
   the timeline.
 
-A 3-minute 1080p recording takes ~4.5s to process and comes out as ~24 frames and
-three contact sheets, 0.4 MB total.
+On an M-series Mac a 3-minute 1080p recording takes ~4.5s to process. With the
+default profile it comes out as up to 24 frames (the budget) plus a contact
+sheet per nine of them; how many of those the video actually earns, and how many
+bytes they weigh, depends on the recording.
+
+Two invariants hold whatever path a frame took:
+
+- **Nothing is dropped silently.** The comparison baseline only ever advances by
+  keeping a frame. There is no path that folds a changed screen into the
+  baseline without emitting it — that would make the change unrecoverable, since
+  every later comparison would measure zero against a state you never see.
+- **Annotations describe the neighbour you can actually see.** After the frame
+  budget prunes the middle of the timeline, every survivor's change percentage,
+  boxes and pointer trail are recomputed against the frame that now precedes it.
+  Only the largest three areas are boxed, and the caption says so when there were
+  more.
 
 ## What you get
 
@@ -133,12 +153,16 @@ the screen that counts as an event, lower = more frames), `--fps`, `--width`,
 ```
 ffmpeg ──raw RGB @4fps, 400px── selector ──timestamps+regions── ffmpeg ──annotated WebP
          one decode pass,         event state machine            drawbox/drawtext
-         constant memory          in plain TypeScript            per frame
+         streamed                 in plain TypeScript            per frame
 ```
 
-Analysis never holds more than two frames in memory, so video length costs time,
-not RAM. All drawing is done by ffmpeg filters, which is why there is no `sharp`
-in `package.json`.
+Decoding streams two frames at a time, and the selector additionally keeps the
+downscaled buffers of the frames it has kept so it can recompute their deltas
+after pruning. That is bounded by the frame budget, not by video length: ~19 MB
+at the defaults, ~53 MB on `dense`. An hour-long recording costs time, not RAM.
+
+All drawing is done by ffmpeg filters, which is why there is no `sharp` in
+`package.json`.
 
 ## Tests
 
@@ -152,6 +176,13 @@ dialog closes at 16s, and the pointer moves during two stretches where nothing
 else happens. The suite asserts that each staged event yields exactly one settled
 frame and that pointer-only motion yields none.
 
+`test/regressions.test.ts` builds its own clips and pins the failures a review
+found in the first version: an event that settles sooner than the minimum gap
+being dropped outright, a frame labelled "final state" that was not the final
+state, a blinking caret reported as a mouse pointer, pruned frames keeping
+annotations that described a frame no longer in the output, a one-frame budget
+returning two, and a still recording billed for duplicate frames.
+
 ## Not there yet
 
 - **Audio transcript.** Bug reports are often narrated, and that narration is the
@@ -162,3 +193,7 @@ frame and that pointer-only motion yields none.
 - **Click detection.** Cursor position is tracked, but a click is only inferred
   from what changes afterwards.
 - **Horizontal scroll** is not detected; vertical is.
+- **Small elements need a nudge.** The default event threshold is 0.8% of the
+  screen, so a progress bar or a badge below that is not an event on its own.
+  `--sensitivity 0.2` or `--profile dense` catches them, at the cost of more
+  frames.

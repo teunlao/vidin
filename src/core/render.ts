@@ -369,7 +369,13 @@ function frameLabel(options: RenderFrameOptions): string {
   parts.push(frame.reason);
   if (frame.deltaPct > 0.05) parts.push(`delta ${frame.deltaPct.toFixed(1)}%`);
   if (frame.regions.length) {
-    parts.push(`${frame.regions.length} region${frame.regions.length > 1 ? 's' : ''} boxed`);
+    const drawn = frame.regions.length;
+    const found = Math.max(frame.regionsFound, drawn);
+    parts.push(
+      found > drawn
+        ? `${drawn} of ${found} changed areas boxed`
+        : `${drawn} region${drawn > 1 ? 's' : ''} boxed`,
+    );
   }
   if (frame.scrolling) parts.push('scrolling');
   return parts.join('  |  ');

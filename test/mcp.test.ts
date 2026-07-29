@@ -9,8 +9,9 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
+import { FIXTURE, ensureFixture } from './support/fixture.ts';
+
 const ROOT = join(import.meta.dir, '..');
-const FIXTURE = join(ROOT, 'fixtures', 'screen-bug.mp4');
 
 let client: Client;
 let session: string;
@@ -21,6 +22,7 @@ interface ToolResult {
 }
 
 beforeAll(async () => {
+  await ensureFixture();
   session = await mkdtemp(join(tmpdir(), 'vidin-mcp-'));
   client = new Client({ name: 'vidin-test', version: '0' });
   await client.connect(
