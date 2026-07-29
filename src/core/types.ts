@@ -68,8 +68,12 @@ export interface SelectionParams {
   enterPct: number;
   /** Percent of changed pixels (vs previous sample) below which the screen is at rest. */
   settlePct: number;
-  /** How many consecutive calm samples confirm that the screen settled. */
-  settleFrames: number;
+  /**
+   * How long the screen must stay calm before it counts as settled. Expressed
+   * in time, not samples: a sample count would silently change meaning whenever
+   * sampleFps is tuned.
+   */
+  settleMs: number;
   /** Never emit two frames closer than this. */
   minGapMs: number;
   /** Emit an anchor frame if nothing happened for this long. */
@@ -90,6 +94,13 @@ export interface SelectionParams {
   cursorNearPct: number;
   /** After this long without a sighting, the pointer is no longer reported. */
   cursorStaleMs: number;
+  /**
+   * How far (percent of the frame) a small blob must travel between samples
+   * before it is accepted as the pointer with nothing else to go on. Movement
+   * is what separates a pointer from a caret or a progress bar, and unlike a
+   * blob count it does not depend on the sampling rate.
+   */
+  cursorMinMovePct: number;
 }
 
 export interface RenderParams {

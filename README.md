@@ -14,24 +14,31 @@ only if you hand it a URL); there is no build step and no native image library.
 
 ## The idea: pick frames, don't slice them
 
-One screenshot per second is the obvious approach and it does not work. Three
-minutes of 1080p video becomes 180 frames, and Claude charges `width × height /
-750` tokens per image: `1920 × 1080 / 750 = 2765` each, so **~498k vision
-tokens** — more than the context most agents are given. Even downscaled to the
-1456px vidin uses, it is ~285k. And roughly 90% of those frames are identical,
-because the person was reading, thinking, or moving the mouse.
+The point is not to save tokens. A 30-second bug report comes out at ~28k
+vision tokens for every image it produces, which against a modern context window
+is nothing. Cost is not the constraint.
 
-vidin is event driven instead. It walks the video at 4 fps in downscaled RGB and
-keeps a frame only when something actually happened:
+**Repetition is.** One screenshot per second turns three minutes into 180
+frames of which ~90% are identical, because the person was reading, thinking or
+moving the mouse. Those duplicates don't cost much — they *bury* the handful of
+frames where something actually happened, and an agent has to look at all of
+them to find out which. Frame selection is a signal-to-noise problem wearing a
+cost problem's clothes.
+
+vidin is event driven instead. It walks the video at 12 fps in downscaled RGB
+and keeps a frame only when something actually happened:
 
 - **Change is measured against the last *kept* frame**, not the previous sample,
   so slow drift accumulates instead of hiding under the threshold.
-- **Cursor movement does not spend a frame.** A pointer produces one or two tiny
-  blobs and almost no total area — but so do a blinking caret, a spinner and a
-  progress bar, so size alone is not accepted as evidence. A blob must also sit
-  where the pointer last was, or show the two-blob leave-and-arrive signature.
-  Get this wrong and the small stuff becomes invisible: it is discounted on the
-  way in *and* reported as a calm screen.
+- **Cursor movement does not spend a frame.** A pointer is a tiny blob with
+  almost no total area — but so is a blinking caret, a spinner or a filling
+  progress bar, so size alone is not accepted as evidence. The pointer has to be
+  argued for positionally: a blob where it was last seen, a leave-and-arrive
+  pair, or a blob that has *moved* since the previous sample. That last one is
+  what makes the rule independent of the sampling rate — sample often enough and
+  the leave/arrive pair overlaps into a single blob, but a caret still doesn't
+  travel. Get this wrong and the small stuff becomes invisible: it is discounted
+  on the way in *and* reported as a calm screen.
 - **Frames land after the change, not inside it.** When motion starts, nothing is
   emitted yet — the selector waits for the screen to come to rest and keeps the
   settled frame. You get the state *after* the click, not the animation blur.
@@ -43,10 +50,18 @@ keeps a frame only when something actually happened:
   budget that drops the least informative frames first while keeping the ends of
   the timeline.
 
-On an M-series Mac a 3-minute 1080p recording takes ~4.5s to process. With the
-default profile it comes out as up to 24 frames (the budget) plus a contact
-sheet per nine of them; how many of those the video actually earns, and how many
-bytes they weigh, depends on the recording.
+On an M-series Mac a 3-minute 1080p recording takes ~4s to process, and a
+30-second one about 3s. The budget is 40 frames; how many the recording actually
+earns is up to the recording.
+
+The analysis rate is 12 fps rather than something frugal because sampling is
+nearly free: decoding dominates that pass — ffmpeg walks every frame regardless,
+and the `fps` filter only picks which ones get scaled and handed over. Measured
+on a 3-minute 1080p clip, going 4 → 12 fps moved the total from 3.9s to 4.0s.
+Sampling four times a second saved a tenth of a second and lost anything on
+screen for less than 250ms: a toast that auto-dismisses, a validation message, a
+flash of an error. Settling is expressed in milliseconds, not in samples, so
+retuning the rate does not quietly change what "the screen came to rest" means.
 
 Two invariants hold whatever path a frame took:
 
@@ -140,9 +155,9 @@ Profiles:
 | profile | for |
 |---------|-----|
 | `bug-report` | default — someone recorded a screen, narrated a bug, stopped |
-| `dense` | short clips where every twitch matters (8 fps analysis, up to 48 frames) |
+| `dense` | short clips where every twitch matters (24 fps analysis, up to 80 frames) |
 | `walkthrough` | long recordings; fewer frames, wider anchors |
-| `cheap` | smallest context footprint (up to 10 frames at 1092px) |
+| `cheap` | smallest footprint, for when the context really is tight (12 frames at 1092px) |
 
 Tuning without leaving the profile: `--max-frames`, `--sensitivity` (percent of
 the screen that counts as an event, lower = more frames), `--fps`, `--width`,
@@ -151,15 +166,15 @@ the screen that counts as an event, lower = more frames), `--fps`, `--width`,
 ## How it works
 
 ```
-ffmpeg ──raw RGB @4fps, 400px── selector ──timestamps+regions── ffmpeg ──annotated WebP
+ffmpeg ─raw RGB @12fps, 400px─ selector ──timestamps+regions── ffmpeg ──annotated WebP
          one decode pass,         event state machine            drawbox/drawtext
          streamed                 in plain TypeScript            per frame
 ```
 
 Decoding streams two frames at a time, and the selector additionally keeps the
 downscaled buffers of the frames it has kept so it can recompute their deltas
-after pruning. That is bounded by the frame budget, not by video length: ~19 MB
-at the defaults, ~53 MB on `dense`. An hour-long recording costs time, not RAM.
+after pruning. That is bounded by the frame budget, not by video length: ~32 MB
+at the defaults, ~90 MB on `dense`. An hour-long recording costs time, not RAM.
 
 All drawing is done by ffmpeg filters, which is why there is no `sharp` in
 `package.json`.

@@ -2,20 +2,27 @@ import type { Profile } from './types.ts';
 
 const base: Omit<Profile, 'name'> = {
   // selection
-  sampleFps: 4,
+  //
+  // The sampling rate is deliberately high. Decoding dominates the analysis
+  // pass — ffmpeg walks every frame regardless, and `fps` only chooses which
+  // ones are scaled and handed over — so going from 4 to 12 fps on a 3-minute
+  // 1080p recording costs about 0.1s in total. Sampling four times a second
+  // bought nothing and lost anything on screen for less than 250ms.
+  sampleFps: 12,
   analysisWidth: 400,
   pixelThreshold: 22,
-  enterPct: 0.8,
+  enterPct: 0.4,
   settlePct: 0.15,
-  settleFrames: 2,
+  settleMs: 400,
   minGapMs: 450,
   maxIntervalMs: 15_000,
   ongoingMs: 3_000,
-  maxFrames: 24,
+  maxFrames: 40,
   cursorMaxAreaPct: 0.45,
   cursorMaxSpanPct: 7,
   cursorNearPct: 6,
   cursorStaleMs: 5_000,
+  cursorMinMovePct: 0.8,
   // rendering
   frameWidth: 1456,
   quality: 78,
@@ -33,36 +40,36 @@ export const profiles: Record<string, Profile> = {
   walkthrough: {
     ...base,
     name: 'walkthrough',
-    enterPct: 1.5,
+    enterPct: 1.2,
     minGapMs: 1_200,
     maxIntervalMs: 25_000,
     ongoingMs: 6_000,
-    maxFrames: 30,
+    maxFrames: 40,
   },
 
   /** Short clips where every twitch matters. */
   dense: {
     ...base,
     name: 'dense',
-    sampleFps: 8,
+    sampleFps: 24,
     analysisWidth: 480,
-    enterPct: 0.35,
-    settleFrames: 1,
+    enterPct: 0.15,
+    settleMs: 150,
     minGapMs: 200,
     maxIntervalMs: 6_000,
     ongoingMs: 1_200,
-    maxFrames: 48,
+    maxFrames: 80,
   },
 
   /** Smallest useful context footprint. */
   cheap: {
     ...base,
     name: 'cheap',
-    sampleFps: 2,
+    sampleFps: 4,
     enterPct: 1.8,
     minGapMs: 1_500,
     maxIntervalMs: 30_000,
-    maxFrames: 10,
+    maxFrames: 12,
     frameWidth: 1092,
     quality: 70,
   },

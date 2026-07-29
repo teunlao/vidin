@@ -52,6 +52,8 @@ export async function selectFrames(
   onProgress?: (sampled: number, selected: number) => void,
 ): Promise<SelectionResult> {
   const size = analysisSize(meta, params.analysisWidth);
+  const sampleIntervalMs = 1000 / params.sampleFps;
+  const settleSamples = Math.max(1, Math.round(params.settleMs / sampleIntervalMs));
   const candidates: Candidate[] = [];
   // Relinking needs the analysis pixels of every kept frame, so the list is
   // trimmed as it grows rather than only at the end — otherwise an hour-long
@@ -69,6 +71,7 @@ export async function selectFrames(
   let pruned = 0;
   let cursor: Point | undefined;
   let cursorSeenMs = Number.NEGATIVE_INFINITY;
+  let lastBlob: Point | undefined;
   let lastSample: Sampled | null = null;
 
   /** The pointer is only reported while the sighting is recent. */
@@ -128,14 +131,16 @@ export async function selectFrames(
 
     // Track the pointer from frame-to-frame motion, and decide whether this
     // sample is *only* the pointer moving.
-    const motion = classifyMotion(vsPrevious, params, freshCursor(frame.timeMs));
+    const motion = classifyMotion(vsPrevious, params, freshCursor(frame.timeMs), lastBlob);
+    lastBlob = motion.blob;
     if (motion.cursor) {
       cursor = motion.cursor;
       cursorSeenMs = frame.timeMs;
     }
 
     const calmPct = motion.cursorOnly ? 0 : vsPrevious.changedPct;
-    const realChangePct = classifyMotion(vsReference, params, freshCursor(frame.timeMs)).cursorOnly
+    const realChangePct = classifyMotion(vsReference, params, freshCursor(frame.timeMs), lastBlob)
+      .cursorOnly
       ? 0
       : vsReference.changedPct;
 
@@ -170,7 +175,7 @@ export async function selectFrames(
         episodeScrolling = true;
       }
 
-      const settled = calmRun >= params.settleFrames;
+      const settled = calmRun >= settleSamples;
       const ongoingBudget = episodeScrolling ? params.ongoingMs * 2 : params.ongoingMs;
 
       if (settled && canEmit) {
@@ -218,7 +223,10 @@ interface Sampled {
 
 interface Motion {
   cursorOnly: boolean;
+  /** A confirmed pointer position. */
   cursor?: Point;
+  /** The small blob that was seen, confirmed or not — evidence for next sample. */
+  blob?: Point;
 }
 
 /**
@@ -228,15 +236,22 @@ interface Motion {
  * progress bar and a ticking counter are all small and compact, and calling any
  * of them "pointer noise" makes them invisible twice over: the change is
  * discounted on the way in, and the screen is simultaneously reported as calm.
- * So a positional argument is required as well — either a blob sitting where
- * the pointer last was (the spot it is leaving), or, when no pointer is known
- * yet, the two-blob leave-and-arrive signature that a moving pointer produces
- * and a blinking caret does not.
+ *
+ * So the pointer has to be argued for positionally, in one of three ways:
+ *   - a blob sits where the pointer was last seen — the spot it is leaving;
+ *   - two blobs appear at once, the leave-and-arrive pair of a pointer that
+ *     jumped further than its own width between samples;
+ *   - a single blob has MOVED since the previous sample. This is the one that
+ *     works at any sampling rate: sample often enough and the leave/arrive pair
+ *     overlaps into one blob, so counting blobs starts to depend on sampleFps,
+ *     while "did it move" does not. A caret blinks in place and a progress bar
+ *     creeps by a pixel; neither travels.
  */
 function classifyMotion(
   grid: Grid,
   params: SelectionParams,
   previousCursor: Point | undefined,
+  lastBlob: Point | undefined,
 ): Motion {
   if (grid.changedPct === 0) return { cursorOnly: true };
   if (grid.changedPct > params.cursorMaxAreaPct) return { cursorOnly: false };
@@ -254,14 +269,18 @@ function classifyMotion(
   }
 
   const centers = found.map((blob) => blobCenter(blob, grid));
-  if (previousCursor) {
-    const near = params.cursorNearPct / 100;
-    if (!centers.some((c) => distance(c, previousCursor) <= near)) return { cursorOnly: false };
-  } else if (found.length < 2) {
-    return { cursorOnly: false };
-  }
+  const anchor = centers[0]!;
 
-  return { cursorOnly: true, cursor: pickCursorBlob(centers, previousCursor) };
+  if (previousCursor && centers.some((c) => distance(c, previousCursor) <= params.cursorNearPct / 100)) {
+    return { cursorOnly: true, cursor: pickCursorBlob(centers, previousCursor), blob: anchor };
+  }
+  if (centers.length >= 2) {
+    return { cursorOnly: true, cursor: pickCursorBlob(centers, previousCursor), blob: anchor };
+  }
+  if (lastBlob && distance(anchor, lastBlob) >= params.cursorMinMovePct / 100) {
+    return { cursorOnly: true, cursor: anchor, blob: anchor };
+  }
+  return { cursorOnly: false, blob: anchor };
 }
 
 /**
