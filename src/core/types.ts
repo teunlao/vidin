@@ -47,10 +47,6 @@ export interface SelectedFrame {
    * there was.
    */
   regionsFound: number;
-  /** Estimated cursor position at this moment, when it could be tracked. */
-  cursor?: Point;
-  /** Where the cursor was at the previously selected frame. */
-  cursorFrom?: Point;
   /** True when the frame-to-frame change looked like vertical scrolling. */
   scrolling: boolean;
   /** Internal ranking weight used when the frame budget forces pruning. */
@@ -82,25 +78,24 @@ export interface SelectionParams {
   ongoingMs: number;
   /** Hard cap on the number of frames in the output. */
   maxFrames: number;
-  /** Total changed area below this percent may be dismissed as cursor movement. */
-  cursorMaxAreaPct: number;
-  /** A blob wider/taller than this percent of the frame is not a cursor. */
-  cursorMaxSpanPct: number;
+  /** Total changed area below this percent may be dismissed as drift. */
+  driftMaxAreaPct: number;
+  /** A blob wider/taller than this percent of the frame is not drift. */
+  driftMaxSpanPct: number;
   /**
-   * How close (percent of the frame) a blob must be to the last known pointer
-   * position to count as that pointer leaving. Without this test, any small
-   * compact change — a caret, a spinner, a progress bar — passes as cursor noise.
+   * How close (percent of the frame) a blob must be to the last drifting blob
+   * to count as the same thing continuing to move.
    */
-  cursorNearPct: number;
-  /** After this long without a sighting, the pointer is no longer reported. */
-  cursorStaleMs: number;
+  driftNearPct: number;
+  /** After this long without a sighting, the drift track is forgotten. */
+  driftStaleMs: number;
   /**
-   * How far (percent of the frame) a small blob must travel between samples
-   * before it is accepted as the pointer with nothing else to go on. Movement
-   * is what separates a pointer from a caret or a progress bar, and unlike a
-   * blob count it does not depend on the sampling rate.
+   * How far (percent of the frame) a small blob must travel between samples to
+   * count as drifting rather than changing in place. Movement is what separates
+   * a pointer from a caret or a progress bar, and unlike a blob count it does
+   * not depend on the sampling rate.
    */
-  cursorMinMovePct: number;
+  driftMinMovePct: number;
 }
 
 export interface RenderParams {
@@ -108,7 +103,7 @@ export interface RenderParams {
   frameWidth: number;
   /** WebP quality for the full-size frames. */
   quality: number;
-  /** Draw change boxes, cursor markers and the timestamp bar. */
+  /** Draw change boxes and the timestamp bar. */
   annotate: boolean;
   /** Build contact sheets. */
   sheets: boolean;

@@ -2,6 +2,10 @@
  * The fixture has a known timeline (see scripts/make-fixture.ts), which makes it
  * possible to assert the two properties the whole tool rests on: every real UI
  * event produces exactly one frame, and pointer movement produces none.
+ *
+ * Note there is no assertion about a *reported* pointer position. Measured on a
+ * real recording that guess was right about half the time, so it is no longer
+ * part of the output — see the drift note in select.ts.
  */
 
 import { afterAll, beforeAll, expect, test } from 'bun:test';
@@ -49,17 +53,6 @@ test('pointer movement alone never spends a frame', () => {
       (frame) => frame.timeMs > window.from * 1000 && frame.timeMs < window.to * 1000,
     );
     expect(inside, `frames kept during cursor-only motion ${window.from}-${window.to}s`).toEqual([]);
-  }
-});
-
-test('the pointer is tracked and carried onto later frames', () => {
-  const tracked = manifest.frames.filter((frame) => frame.cursor !== undefined);
-  expect(tracked.length).toBeGreaterThan(0);
-  for (const frame of tracked) {
-    expect(frame.cursor!.x).toBeGreaterThanOrEqual(0);
-    expect(frame.cursor!.x).toBeLessThanOrEqual(1);
-    expect(frame.cursor!.y).toBeGreaterThanOrEqual(0);
-    expect(frame.cursor!.y).toBeLessThanOrEqual(1);
   }
 });
 

@@ -96,10 +96,10 @@ test('a clip shorter than minGapMs still shows what it ended on', async () => {
   expect(last.deltaPct, 'the closing frame must be the changed screen').toBeGreaterThan(50);
 }, 60_000);
 
-test('a blinking caret is not mistaken for the mouse pointer', async () => {
-  // Small, compact and repeating — the old classifier accepted anything of that
-  // shape as pointer movement, drew a crosshair on it, and told the state
-  // machine the screen was calm.
+test('a blinking caret neither spends a frame nor hides a real event', async () => {
+  // Small, compact and repeating. The classifier used to accept anything of that
+  // shape as pointer noise, which both discounted it on the way in and told the
+  // state machine the screen was calm — so a real change could be swallowed.
   const source = await clip('caret', 8, [
     `drawbox=x=0:y=0:w=640:h=360:color=white:t=fill`,
     `drawbox=x=100:y=90:w=3:h=20:color=black:t=fill:enable='lt(mod(t,1),0.5)'`,
@@ -107,8 +107,12 @@ test('a blinking caret is not mistaken for the mouse pointer', async () => {
   ]);
   const manifest = await run(source, 'caret');
 
-  const invented = manifest.frames.filter((f) => f.cursor !== undefined);
-  expect(invented, 'no pointer exists in this video, so none may be reported').toEqual([]);
+  const blinks = manifest.frames.filter((f) => f.timeMs > 500 && f.timeMs < 3800);
+  expect(blinks, 'a blinking caret is not an event').toEqual([]);
+
+  const panel = manifest.frames.filter((f) => f.timeMs >= 4000 && f.timeMs < 5500);
+  expect(panel.length, 'the panel at 4s must survive the caret').toBe(1);
+  expect(panel[0]!.reason).toBe('settled');
 }, 60_000);
 
 test('a change is captured once it settles, not mid-animation', async () => {

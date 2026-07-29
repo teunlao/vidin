@@ -51,7 +51,6 @@ export function buildReport(manifest: Manifest): string {
     lines.push('## What the annotations mean');
     lines.push('');
     lines.push('- **Red dashed box** — the area that changed since the previous frame in this list.');
-    lines.push('- **Cyan crosshair** — the mouse pointer; a faint cyan square is where it was before.');
     lines.push('- **Bottom bar** — frame number, timestamp in the original video, time since the previous frame, why it was kept.');
     lines.push('');
   }

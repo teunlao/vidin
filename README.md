@@ -30,15 +30,13 @@ and keeps a frame only when something actually happened:
 
 - **Change is measured against the last *kept* frame**, not the previous sample,
   so slow drift accumulates instead of hiding under the threshold.
-- **Cursor movement does not spend a frame.** A pointer is a tiny blob with
-  almost no total area — but so is a blinking caret, a spinner or a filling
-  progress bar, so size alone is not accepted as evidence. The pointer has to be
-  argued for positionally: a blob where it was last seen, a leave-and-arrive
-  pair, or a blob that has *moved* since the previous sample. That last one is
-  what makes the rule independent of the sampling rate — sample often enough and
-  the leave/arrive pair overlaps into a single blob, but a caret still doesn't
-  travel. Get this wrong and the small stuff becomes invisible: it is discounted
-  on the way in *and* reported as a calm screen.
+- **Drifting specks do not spend a frame.** The mouse pointer is a tiny blob
+  with almost no total area — but so is a blinking caret, a spinner or a filling
+  progress bar, so size alone is not accepted as evidence. What is required is
+  that the blob *travels*: a caret blinks in place and a progress bar creeps by a
+  pixel, while a pointer moves across the screen. Get this wrong and the small
+  stuff becomes invisible twice over — discounted on the way in *and* reported as
+  a calm screen.
 - **Frames land after the change, not inside it.** When motion starts, nothing is
   emitted yet — the selector waits for the screen to come to rest and keeps the
   settled frame. You get the state *after* the click, not the animation blur.
@@ -88,7 +86,6 @@ out/
 Each frame is annotated:
 
 - **red dashed box** around the regions that changed since the previous kept frame
-- **cyan crosshair** on the mouse pointer, faint square where it was before
 - **bottom bar** with frame number, timestamp in the original video, gap since the
   previous frame, why the frame was kept, and how much of the screen changed
 
@@ -205,8 +202,14 @@ returning two, and a still recording billed for duplicate frames.
   `mlx-whisper`); the plan is a `transcript.md` aligned to the frame timeline.
 - **OCR.** Running text extraction over kept frames would let an agent grep an
   error message without spending vision tokens at all.
-- **Click detection.** Cursor position is tracked, but a click is only inferred
-  from what changes afterwards.
+- **Pointer position is not reported.** The drift tracker knows *something*
+  small is moving, which is all it needs in order to ignore it. It does not claim
+  that thing is the mouse: checked against a real recording it was right about
+  half the time — a growing DevTools request list drifts down the screen exactly
+  like a pointer does. Being wrong internally costs a frame kept or skipped;
+  publishing it would put "the user was pointing here" into a bug report on a
+  coin flip, and the pointer is plainly visible in the frame anyway.
+- **Click detection**, for the same reason, is not attempted yet.
 - **Horizontal scroll** is not detected; vertical is.
 - **Small elements need a nudge.** The default event threshold is 0.8% of the
   screen, so a progress bar or a badge below that is not an event on its own.

@@ -21,7 +21,7 @@
  *      changed screen into the reference silently — that would make the change
  *      unrecoverable, because every later diff would then measure zero against
  *      a state the reader never sees.
- *   B. Every frame's deltaPct/regions/cursorFrom describe its neighbour in the
+ *   B. Every frame's deltaPct and regions describe its neighbour in the
  *      FINAL list. They are relinked after pruning, so neither the drawn box nor
  *      the report can claim a change against a frame that was dropped.
  */
@@ -69,14 +69,14 @@ export async function selectFrames(
   let episodeScrolling = false;
   let sampled = 0;
   let pruned = 0;
-  let cursor: Point | undefined;
-  let cursorSeenMs = Number.NEGATIVE_INFINITY;
+  let drift: Point | undefined;
+  let driftSeenMs = Number.NEGATIVE_INFINITY;
   let lastBlob: Point | undefined;
   let lastSample: Sampled | null = null;
 
-  /** The pointer is only reported while the sighting is recent. */
-  const freshCursor = (timeMs: number): Point | undefined =>
-    timeMs - cursorSeenMs <= params.cursorStaleMs ? cursor : undefined;
+  /** The drift track is only trusted while the sighting is recent. */
+  const freshDrift = (timeMs: number): Point | undefined =>
+    timeMs - driftSeenMs <= params.driftStaleMs ? drift : undefined;
 
   const emit = (
     timeMs: number,
@@ -97,8 +97,6 @@ export async function selectFrames(
         reason,
         regions,
         regionsFound: found.total,
-        cursor: freshCursor(timeMs),
-        cursorFrom: candidates.at(-1)?.frame.cursor,
         scrolling,
         score: rank(reason, deltaPct, regions),
       },
@@ -131,16 +129,16 @@ export async function selectFrames(
 
     // Track the pointer from frame-to-frame motion, and decide whether this
     // sample is *only* the pointer moving.
-    const motion = classifyMotion(vsPrevious, params, freshCursor(frame.timeMs), lastBlob);
+    const motion = classifyMotion(vsPrevious, params, freshDrift(frame.timeMs), lastBlob);
     lastBlob = motion.blob;
-    if (motion.cursor) {
-      cursor = motion.cursor;
-      cursorSeenMs = frame.timeMs;
+    if (motion.drift) {
+      drift = motion.drift;
+      driftSeenMs = frame.timeMs;
     }
 
-    const calmPct = motion.cursorOnly ? 0 : vsPrevious.changedPct;
-    const realChangePct = classifyMotion(vsReference, params, freshCursor(frame.timeMs), lastBlob)
-      .cursorOnly
+    const calmPct = motion.incidental ? 0 : vsPrevious.changedPct;
+    const realChangePct = classifyMotion(vsReference, params, freshDrift(frame.timeMs), lastBlob)
+      .incidental
       ? 0
       : vsReference.changedPct;
 
@@ -222,72 +220,76 @@ interface Sampled {
 }
 
 interface Motion {
-  cursorOnly: boolean;
-  /** A confirmed pointer position. */
-  cursor?: Point;
+  /** True when the diff is small, compact and drifting — not a UI event. */
+  incidental: boolean;
+  /** Where the drifting thing now is, when the evidence supports one. */
+  drift?: Point;
   /** The small blob that was seen, confirmed or not — evidence for next sample. */
   blob?: Point;
 }
 
 /**
- * Decide whether a diff is just the mouse pointer moving.
+ * Decide whether a diff is small, compact and *drifting across the screen* —
+ * usually the mouse pointer, and never worth a frame of its own.
  *
  * Size alone is not evidence. A blinking text caret, a spinner, a filling
- * progress bar and a ticking counter are all small and compact, and calling any
- * of them "pointer noise" makes them invisible twice over: the change is
- * discounted on the way in, and the screen is simultaneously reported as calm.
+ * progress bar and a ticking counter are all small and compact, and dismissing
+ * any of them makes it invisible twice over: the change is discounted on the way
+ * in, and the screen is simultaneously reported as calm. So drift has to be
+ * argued for positionally: a blob where the drift was last seen, a
+ * leave-and-arrive pair, or a single blob that has MOVED since the previous
+ * sample. That last test is the one that holds at any sampling rate — sample
+ * often enough and the leave/arrive pair overlaps into one blob, so counting
+ * blobs starts to depend on sampleFps while "did it travel" does not.
  *
- * So the pointer has to be argued for positionally, in one of three ways:
- *   - a blob sits where the pointer was last seen — the spot it is leaving;
- *   - two blobs appear at once, the leave-and-arrive pair of a pointer that
- *     jumped further than its own width between samples;
- *   - a single blob has MOVED since the previous sample. This is the one that
- *     works at any sampling rate: sample often enough and the leave/arrive pair
- *     overlaps into one blob, so counting blobs starts to depend on sampleFps,
- *     while "did it move" does not. A caret blinks in place and a progress bar
- *     creeps by a pixel; neither travels.
+ * What this deliberately does NOT do is claim the drifting thing IS the pointer.
+ * Measured against a real recording it was right about half the time — a growing
+ * DevTools request list drifts down the screen exactly like a pointer — so the
+ * position stays internal. Being wrong here costs a frame kept or skipped; being
+ * wrong in the output would put a fabricated "the user was pointing here" into a
+ * bug report, and the pointer is plainly visible in the frame anyway.
  */
 function classifyMotion(
   grid: Grid,
   params: SelectionParams,
-  previousCursor: Point | undefined,
+  previousDrift: Point | undefined,
   lastBlob: Point | undefined,
 ): Motion {
-  if (grid.changedPct === 0) return { cursorOnly: true };
-  if (grid.changedPct > params.cursorMaxAreaPct) return { cursorOnly: false };
+  if (grid.changedPct === 0) return { incidental: true };
+  if (grid.changedPct > params.driftMaxAreaPct) return { incidental: false };
 
   // No active cells at all: a few stray pixels of compression noise, not an event.
   const found = blobs(grid, 2);
-  if (found.length === 0) return { cursorOnly: true };
-  if (found.length > 3) return { cursorOnly: false };
+  if (found.length === 0) return { incidental: true };
+  if (found.length > 3) return { incidental: false };
 
-  const maxSpanCols = (params.cursorMaxSpanPct / 100) * grid.cols;
-  const maxSpanRows = (params.cursorMaxSpanPct / 100) * grid.rows;
+  const maxSpanCols = (params.driftMaxSpanPct / 100) * grid.cols;
+  const maxSpanRows = (params.driftMaxSpanPct / 100) * grid.rows;
   for (const blob of found) {
-    if (blob.c1 - blob.c0 + 1 > maxSpanCols) return { cursorOnly: false };
-    if (blob.r1 - blob.r0 + 1 > maxSpanRows) return { cursorOnly: false };
+    if (blob.c1 - blob.c0 + 1 > maxSpanCols) return { incidental: false };
+    if (blob.r1 - blob.r0 + 1 > maxSpanRows) return { incidental: false };
   }
 
   const centers = found.map((blob) => blobCenter(blob, grid));
   const anchor = centers[0]!;
 
-  if (previousCursor && centers.some((c) => distance(c, previousCursor) <= params.cursorNearPct / 100)) {
-    return { cursorOnly: true, cursor: pickCursorBlob(centers, previousCursor), blob: anchor };
+  if (previousDrift && centers.some((c) => distance(c, previousDrift) <= params.driftNearPct / 100)) {
+    return { incidental: true, drift: pickArrival(centers, previousDrift), blob: anchor };
   }
   if (centers.length >= 2) {
-    return { cursorOnly: true, cursor: pickCursorBlob(centers, previousCursor), blob: anchor };
+    return { incidental: true, drift: pickArrival(centers, previousDrift), blob: anchor };
   }
-  if (lastBlob && distance(anchor, lastBlob) >= params.cursorMinMovePct / 100) {
-    return { cursorOnly: true, cursor: anchor, blob: anchor };
+  if (lastBlob && distance(anchor, lastBlob) >= params.driftMinMovePct / 100) {
+    return { incidental: true, drift: anchor, blob: anchor };
   }
-  return { cursorOnly: false, blob: anchor };
+  return { incidental: false, blob: anchor };
 }
 
 /**
- * Of the small blobs, the one nearest the previous pointer position is where the
- * pointer *was*; the other one is where it is now.
+ * Of the small blobs, the one nearest the previous position is where the thing
+ * *was*; the other one is where it is now.
  */
-function pickCursorBlob(centers: Point[], previous: Point | undefined): Point {
+function pickArrival(centers: Point[], previous: Point | undefined): Point {
   if (centers.length === 1 || !previous) return centers[0]!;
 
   let departedIndex = 0;
@@ -352,7 +354,6 @@ function relink(candidates: Candidate[], size: FrameSize, threshold: number): vo
       current.frame.deltaPct = 0;
       current.frame.regions = [];
       current.frame.regionsFound = 0;
-      current.frame.cursorFrom = undefined;
       continue;
     }
     const before = candidates[i - 1]!;
@@ -361,7 +362,6 @@ function relink(candidates: Candidate[], size: FrameSize, threshold: number): vo
     current.frame.deltaPct = grid.changedPct;
     current.frame.regions = found.regions;
     current.frame.regionsFound = found.total;
-    current.frame.cursorFrom = before.frame.cursor;
   }
 }
 

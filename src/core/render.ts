@@ -10,10 +10,9 @@
 
 import { unlink } from 'node:fs/promises';
 import { ffmpeg, findFont } from './ffmpeg.ts';
-import type { Point, Rect, SelectedFrame, VideoMeta } from './types.ts';
+import type { Rect, SelectedFrame, VideoMeta } from './types.ts';
 
 const CHANGE_COLOR = '0xFF3B30';
-const CURSOR_COLOR = '0x00E5FF';
 const BAR_COLOR = '0x111116';
 const TEXT_COLOR = '0xF2F2F5';
 
@@ -47,12 +46,6 @@ export async function renderFrame(options: RenderFrameOptions): Promise<void> {
   if (annotate) {
     for (const region of frame.regions) {
       filters.push(...dashedBox(toPixels(region, size), boxThickness(size)));
-    }
-    if (frame.cursorFrom && frame.cursor && distance(frame.cursorFrom, frame.cursor) > 0.01) {
-      filters.push(...ghostMarker(frame.cursorFrom, size));
-    }
-    if (frame.cursor) {
-      filters.push(...cursorMarker(frame.cursor, size));
     }
     filters.push(...(await labelBar(size, frameLabel(options), labelFile)));
   }
@@ -104,7 +97,6 @@ export async function renderCell(options: RenderCellOptions): Promise<void> {
     for (const region of frame.regions) {
       filters.push(...dashedBox(toPixels(region, cell), Math.max(2, Math.round(cell.width / 220))));
     }
-    if (frame.cursor) filters.push(...cursorMarker(frame.cursor, cell));
   }
 
   const fontSize = Math.max(13, Math.round(labelHeight * 0.62));
@@ -308,32 +300,6 @@ function dashedBox(
   return filters;
 }
 
-/** Crosshair plus ring at the current pointer position. */
-function cursorMarker(point: Point, size: OutputSize): string[] {
-  const x = Math.round(point.x * size.width);
-  const y = Math.round(point.y * size.height);
-  const arm = Math.max(9, Math.round(size.width / 90));
-  const ring = Math.max(6, Math.round(size.width / 140));
-  const t = Math.max(2, Math.round(size.width / 700));
-  const color = `${CURSOR_COLOR}@0.95`;
-  return [
-    box(x - arm, y - Math.floor(t / 2), arm * 2, t, color),
-    box(x - Math.floor(t / 2), y - arm, t, arm * 2, color),
-    `drawbox=x=${x - ring}:y=${y - ring}:w=${ring * 2}:h=${ring * 2}:color=${color}:t=${t}`,
-  ];
-}
-
-/** Where the pointer was on the previous kept frame. */
-function ghostMarker(point: Point, size: OutputSize): string[] {
-  const x = Math.round(point.x * size.width);
-  const y = Math.round(point.y * size.height);
-  const ring = Math.max(5, Math.round(size.width / 170));
-  const t = Math.max(1, Math.round(size.width / 900));
-  return [
-    `drawbox=x=${x - ring}:y=${y - ring}:w=${ring * 2}:h=${ring * 2}:color=${CURSOR_COLOR}@0.4:t=${t}`,
-  ];
-}
-
 function box(x: number, y: number, w: number, h: number, color: string): string {
   return `drawbox=x=${Math.round(x)}:y=${Math.round(y)}:w=${Math.round(w)}:h=${Math.round(h)}:color=${color}:t=fill`;
 }
@@ -437,10 +403,6 @@ export function fileStamp(ms: number): string {
   const minutes = Math.floor(totalSeconds / 60);
   const seconds = totalSeconds - minutes * 60;
   return `${String(minutes).padStart(2, '0')}m${seconds.toFixed(1).padStart(4, '0')}s`;
-}
-
-function distance(a: Point, b: Point): number {
-  return Math.hypot(a.x - b.x, a.y - b.y);
 }
 
 function clamp(value: number, min: number, max: number): number {
