@@ -1,0 +1,33 @@
+{
+  "name": "vidin",
+  "version": "0.1.0",
+  "description": "Turn a video (bug report, screen recording) into an agent-readable set of annotated keyframes",
+  "type": "module",
+  "bin": {
+    "vidin": "./bin/vidin.ts",
+    "vidin-mcp": "./bin/vidin-mcp.ts"
+  },
+  "scripts": {
+    "vidin": "bun run bin/vidin.ts",
+    "mcp": "bun run bin/vidin-mcp.ts",
+    "typecheck": "bunx tsc --noEmit",
+    "test": "bun test",
+    "fixture": "bun run scripts/make-fixture.ts"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.20.0",
+    "zod": "^3.25.76"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "typescript": "^5.9.0"
+  },
+  "engines": {
+    "bun": ">=1.1.0"
+  },
+  "files": [
+    "bin",
+    "src",
+    "README.md"
+  ]
+}
