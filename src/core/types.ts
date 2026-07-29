@@ -78,24 +78,6 @@ export interface SelectionParams {
   ongoingMs: number;
   /** Hard cap on the number of frames in the output. */
   maxFrames: number;
-  /** Total changed area below this percent may be dismissed as drift. */
-  driftMaxAreaPct: number;
-  /** A blob wider/taller than this percent of the frame is not drift. */
-  driftMaxSpanPct: number;
-  /**
-   * How close (percent of the frame) a blob must be to the last drifting blob
-   * to count as the same thing continuing to move.
-   */
-  driftNearPct: number;
-  /** After this long without a sighting, the drift track is forgotten. */
-  driftStaleMs: number;
-  /**
-   * How far (percent of the frame) a small blob must travel between samples to
-   * count as drifting rather than changing in place. Movement is what separates
-   * a pointer from a caret or a progress bar, and unlike a blob count it does
-   * not depend on the sampling rate.
-   */
-  driftMinMovePct: number;
 }
 
 export interface RenderParams {

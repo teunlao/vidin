@@ -26,10 +26,10 @@
  *      the report can claim a change against a frame that was dropped.
  */
 
-import { area, blobCenter, blobToRect, blobs, diffGrid, estimateScroll } from './diff.ts';
+import { area, blobToRect, blobs, diffGrid, estimateScroll } from './diff.ts';
 import type { FrameSize, Grid } from './diff.ts';
 import { analysisSize, sample } from './sample.ts';
-import type { Point, Rect, SelectedFrame, SelectionParams, VideoMeta } from './types.ts';
+import type { Rect, SelectedFrame, SelectionParams, VideoMeta } from './types.ts';
 
 export interface SelectionResult {
   frames: SelectedFrame[];
@@ -69,14 +69,7 @@ export async function selectFrames(
   let episodeScrolling = false;
   let sampled = 0;
   let pruned = 0;
-  let drift: Point | undefined;
-  let driftSeenMs = Number.NEGATIVE_INFINITY;
-  let lastBlob: Point | undefined;
   let lastSample: Sampled | null = null;
-
-  /** The drift track is only trusted while the sighting is recent. */
-  const freshDrift = (timeMs: number): Point | undefined =>
-    timeMs - driftSeenMs <= params.driftStaleMs ? drift : undefined;
 
   const emit = (
     timeMs: number,
@@ -127,20 +120,8 @@ export async function selectFrames(
     const vsPrevious = diffGrid(frame.pixels, previous, size, params.pixelThreshold);
     const vsReference = diffGrid(frame.pixels, reference, size, params.pixelThreshold);
 
-    // Track the pointer from frame-to-frame motion, and decide whether this
-    // sample is *only* the pointer moving.
-    const motion = classifyMotion(vsPrevious, params, freshDrift(frame.timeMs), lastBlob);
-    lastBlob = motion.blob;
-    if (motion.drift) {
-      drift = motion.drift;
-      driftSeenMs = frame.timeMs;
-    }
-
-    const calmPct = motion.incidental ? 0 : vsPrevious.changedPct;
-    const realChangePct = classifyMotion(vsReference, params, freshDrift(frame.timeMs), lastBlob)
-      .incidental
-      ? 0
-      : vsReference.changedPct;
+    const calmPct = vsPrevious.changedPct;
+    const realChangePct = vsReference.changedPct;
 
     const sinceReference = frame.timeMs - referenceTimeMs;
     const canEmit = sinceReference >= params.minGapMs;
@@ -219,96 +200,9 @@ interface Sampled {
   pixels: Uint8Array;
 }
 
-interface Motion {
-  /** True when the diff is small, compact and drifting — not a UI event. */
-  incidental: boolean;
-  /** Where the drifting thing now is, when the evidence supports one. */
-  drift?: Point;
-  /** The small blob that was seen, confirmed or not — evidence for next sample. */
-  blob?: Point;
-}
-
 /**
- * Decide whether a diff is small, compact and *drifting across the screen* —
- * usually the mouse pointer, and never worth a frame of its own.
- *
- * Size alone is not evidence. A blinking text caret, a spinner, a filling
- * progress bar and a ticking counter are all small and compact, and dismissing
- * any of them makes it invisible twice over: the change is discounted on the way
- * in, and the screen is simultaneously reported as calm. So drift has to be
- * argued for positionally: a blob where the drift was last seen, a
- * leave-and-arrive pair, or a single blob that has MOVED since the previous
- * sample. That last test is the one that holds at any sampling rate — sample
- * often enough and the leave/arrive pair overlaps into one blob, so counting
- * blobs starts to depend on sampleFps while "did it travel" does not.
- *
- * What this deliberately does NOT do is claim the drifting thing IS the pointer.
- * Measured against a real recording it was right about half the time — a growing
- * DevTools request list drifts down the screen exactly like a pointer — so the
- * position stays internal. Being wrong here costs a frame kept or skipped; being
- * wrong in the output would put a fabricated "the user was pointing here" into a
- * bug report, and the pointer is plainly visible in the frame anyway.
- */
-function classifyMotion(
-  grid: Grid,
-  params: SelectionParams,
-  previousDrift: Point | undefined,
-  lastBlob: Point | undefined,
-): Motion {
-  if (grid.changedPct === 0) return { incidental: true };
-  if (grid.changedPct > params.driftMaxAreaPct) return { incidental: false };
-
-  // No active cells at all: a few stray pixels of compression noise, not an event.
-  const found = blobs(grid, 2);
-  if (found.length === 0) return { incidental: true };
-  if (found.length > 3) return { incidental: false };
-
-  const maxSpanCols = (params.driftMaxSpanPct / 100) * grid.cols;
-  const maxSpanRows = (params.driftMaxSpanPct / 100) * grid.rows;
-  for (const blob of found) {
-    if (blob.c1 - blob.c0 + 1 > maxSpanCols) return { incidental: false };
-    if (blob.r1 - blob.r0 + 1 > maxSpanRows) return { incidental: false };
-  }
-
-  const centers = found.map((blob) => blobCenter(blob, grid));
-  const anchor = centers[0]!;
-
-  if (previousDrift && centers.some((c) => distance(c, previousDrift) <= params.driftNearPct / 100)) {
-    return { incidental: true, drift: pickArrival(centers, previousDrift), blob: anchor };
-  }
-  if (centers.length >= 2) {
-    return { incidental: true, drift: pickArrival(centers, previousDrift), blob: anchor };
-  }
-  if (lastBlob && distance(anchor, lastBlob) >= params.driftMinMovePct / 100) {
-    return { incidental: true, drift: anchor, blob: anchor };
-  }
-  return { incidental: false, blob: anchor };
-}
-
-/**
- * Of the small blobs, the one nearest the previous position is where the thing
- * *was*; the other one is where it is now.
- */
-function pickArrival(centers: Point[], previous: Point | undefined): Point {
-  if (centers.length === 1 || !previous) return centers[0]!;
-
-  let departedIndex = 0;
-  let bestDistance = Number.POSITIVE_INFINITY;
-  centers.forEach((center, i) => {
-    const gap = distance(center, previous);
-    if (gap < bestDistance) {
-      bestDistance = gap;
-      departedIndex = i;
-    }
-  });
-
-  return centers.find((_, i) => i !== departedIndex) ?? centers[0]!;
-}
-
-/**
- * Change boxes worth drawing: drop cursor-sized specks when a real region
- * exists, and report how many survived that filter even though only the largest
- * few are drawn.
+ * Change boxes worth drawing: drop specks when a real region exists, and report
+ * how many survived that filter even though only the largest few are drawn.
  */
 const MAX_DRAWN_REGIONS = 3;
 
@@ -400,8 +294,4 @@ function prune(candidates: Candidate[], maxFrames: number): number {
     removed++;
   }
   return removed;
-}
-
-function distance(a: Point, b: Point): number {
-  return Math.hypot(a.x - b.x, a.y - b.y);
 }

@@ -30,13 +30,11 @@ and keeps a frame only when something actually happened:
 
 - **Change is measured against the last *kept* frame**, not the previous sample,
   so slow drift accumulates instead of hiding under the threshold.
-- **Drifting specks do not spend a frame.** The mouse pointer is a tiny blob
-  with almost no total area — but so is a blinking caret, a spinner or a filling
-  progress bar, so size alone is not accepted as evidence. What is required is
-  that the blob *travels*: a caret blinks in place and a progress bar creeps by a
-  pixel, while a pointer moves across the screen. Get this wrong and the small
-  stuff becomes invisible twice over — discounted on the way in *and* reported as
-  a calm screen.
+- **A moving mouse costs nothing**, and it needs no special handling to do so: at
+  400px analysis width a pointer is about 0.03% of the screen against an event
+  threshold of 0.4%, an order of magnitude below. There was once a subsystem for
+  recognising it; measured on real recordings it changed no decision anywhere,
+  so it is gone.
 - **Frames land after the change, not inside it.** When motion starts, nothing is
   emitted yet — the selector waits for the screen to come to rest and keeps the
   settled frame. You get the state *after* the click, not the animation blur.
@@ -202,14 +200,16 @@ returning two, and a still recording billed for duplicate frames.
   `mlx-whisper`); the plan is a `transcript.md` aligned to the frame timeline.
 - **OCR.** Running text extraction over kept frames would let an agent grep an
   error message without spending vision tokens at all.
-- **Pointer position is not reported.** The drift tracker knows *something*
-  small is moving, which is all it needs in order to ignore it. It does not claim
-  that thing is the mouse: checked against a real recording it was right about
-  half the time — a growing DevTools request list drifts down the screen exactly
-  like a pointer does. Being wrong internally costs a frame kept or skipped;
-  publishing it would put "the user was pointing here" into a bug report on a
-  coin flip, and the pointer is plainly visible in the frame anyway.
+- **Pointer position is not reported.** It was, briefly, as a crosshair drawn on
+  each frame. Checked against a real recording it was right about half the time:
+  a growing DevTools request list moves down the screen exactly like a pointer
+  does. A wrong marker asserts "the user was pointing here" in a bug report on a
+  coin flip, and the pointer is plainly visible in the frame anyway, so the claim
+  was dropped rather than patched.
 - **Click detection**, for the same reason, is not attempted yet.
+- **A pointer that never stops moving** can still spend a periodic frame on a
+  small recording, where its trail is large relative to the frame. Cheap noise,
+  and the thresholds that were supposed to prevent it never fired in practice.
 - **Horizontal scroll** is not detected; vertical is.
 - **Small elements need a nudge.** The default event threshold is 0.8% of the
   screen, so a progress bar or a badge below that is not an event on its own.

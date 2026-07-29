@@ -18,11 +18,6 @@ const base: Omit<Profile, 'name'> = {
   maxIntervalMs: 15_000,
   ongoingMs: 3_000,
   maxFrames: 40,
-  driftMaxAreaPct: 0.45,
-  driftMaxSpanPct: 7,
-  driftNearPct: 6,
-  driftStaleMs: 5_000,
-  driftMinMovePct: 0.8,
   // rendering
   frameWidth: 1456,
   quality: 78,
