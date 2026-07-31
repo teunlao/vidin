@@ -1,5 +1,5 @@
 {
-  "name": "vidin",
+  "name": "@teunlao/vidin",
   "version": "0.1.0",
   "description": "Turn a video (bug report, screen recording) into an agent-readable set of annotated keyframes. CLI + MCP server; the only native dependency is ffmpeg.",
   "type": "module",
@@ -24,8 +24,8 @@
     "vision"
   ],
   "bin": {
-    "vidin": "./dist/bin/vidin.js",
-    "vidin-mcp": "./dist/bin/vidin-mcp.js"
+    "vidin": "dist/bin/vidin.js",
+    "vidin-mcp": "dist/bin/vidin-mcp.js"
   },
   "files": [
     "dist"
@@ -53,5 +53,8 @@
   },
   "overrides": {
     "zod": "$zod"
+  },
+  "publishConfig": {
+    "access": "public"
   }
 }

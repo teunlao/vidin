@@ -19,8 +19,8 @@ vidin's synthetic test fixture.)*
   nothing; every real UI event is captured.
 - **Fast.** A 3-minute 1080p recording takes ~4 seconds on an M-series Mac.
   An hour-long one costs time, not RAM.
-- **One command to run.** `npx vidin` — all it asks of the machine is
-  `ffmpeg`; no sharp, no headless browser, no native image library.
+- **One command to run.** `npx @teunlao/vidin` — all it asks of the machine
+  is `ffmpeg`; no sharp, no headless browser, no native image library.
 - **Shaped for agent context.** The MCP tools return a written report and one
   contact sheet first; full-detail frames only for the moments that turn out to
   matter.
@@ -36,7 +36,7 @@ brew install ffmpeg        # + yt-dlp, only if you'll pass URLs
 Hook it into Claude Code:
 
 ```sh
-claude mcp add vidin -- npx -y vidin mcp
+claude mcp add vidin -- npx -y @teunlao/vidin mcp
 ```
 
 Or in `.mcp.json` / `~/.codex/config.toml` equivalents:
@@ -44,7 +44,7 @@ Or in `.mcp.json` / `~/.codex/config.toml` equivalents:
 ```json
 {
   "mcpServers": {
-    "vidin": { "command": "npx", "args": ["-y", "vidin", "mcp"] }
+    "vidin": { "command": "npx", "args": ["-y", "@teunlao/vidin", "mcp"] }
   }
 }
 ```
@@ -52,13 +52,12 @@ Or in `.mcp.json` / `~/.codex/config.toml` equivalents:
 Or straight from the shell:
 
 ```sh
-npx vidin ~/Desktop/bug.mov                    # → ./.vidin/bug/
-npx vidin https://example.com/screencast.mp4   # downloaded with yt-dlp
-npx vidin zoom bug.mov --from 00:41 --to 00:45 --fps 6
-npx vidin probe bug.mov
+npx @teunlao/vidin ~/Desktop/bug.mov       # → ./.vidin/bug/
+npm i -g @teunlao/vidin                    # or put `vidin` on PATH for good
+vidin https://example.com/screencast.mp4   # downloaded with yt-dlp
+vidin zoom bug.mov --from 00:41 --to 00:45 --fps 6
+vidin probe bug.mov
 ```
-
-(`npm i -g vidin` if you'd rather have it on PATH; `bunx vidin` works too.)
 
 ## What comes out
 

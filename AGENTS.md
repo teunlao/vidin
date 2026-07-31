@@ -17,8 +17,9 @@ bun run fixture       # regenerate fixtures/screen-bug.mp4 (synthetic, scripted 
 ```
 
 Toolchain: Bun ≥ 1.1 (development only) and `ffmpeg`/`ffprobe` on PATH.
-`yt-dlp` is needed only for URL input. The published package targets Node ≥ 20
-via `npx vidin`; end users never need Bun.
+`yt-dlp` is needed only for URL input. The published package is
+`@teunlao/vidin` (plain `vidin` is blocked by npm's similarity check against
+`vision`); it targets Node ≥ 20 via npx, and end users never need Bun.
 
 ## Hard rules
 
