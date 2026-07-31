@@ -4,12 +4,19 @@
  * vidin deliberately shells out instead of linking a native image library:
  * ffmpeg already does decoding, scaling, drawing and WebP encoding, and it can
  * hand us raw grayscale bytes on stdout for the analysis pass. That keeps the
- * dependency list at "a working ffmpeg" and lets Bun run the sources directly.
+ * dependency list at "a working ffmpeg".
+ *
+ * Only node: APIs here — the published package runs under whatever `npx`
+ * resolves to, so the runtime code cannot assume Bun.
  */
 
-export const FFMPEG = Bun.env.VIDIN_FFMPEG ?? 'ffmpeg';
-export const FFPROBE = Bun.env.VIDIN_FFPROBE ?? 'ffprobe';
-export const YTDLP = Bun.env.VIDIN_YTDLP ?? 'yt-dlp';
+import { spawn } from 'node:child_process';
+import type { ChildProcess } from 'node:child_process';
+import { existsSync } from 'node:fs';
+
+export const FFMPEG = process.env.VIDIN_FFMPEG ?? 'ffmpeg';
+export const FFPROBE = process.env.VIDIN_FFPROBE ?? 'ffprobe';
+export const YTDLP = process.env.VIDIN_YTDLP ?? 'yt-dlp';
 
 export class FfmpegError extends Error {
   constructor(
@@ -30,19 +37,30 @@ export interface RunResult {
 
 /** Run a command to completion and capture its output as text. */
 export async function run(cmd: string[], opts: { cwd?: string } = {}): Promise<RunResult> {
-  const proc = Bun.spawn({
-    cmd,
-    cwd: opts.cwd,
-    stdout: 'pipe',
-    stderr: 'pipe',
-    stdin: 'ignore',
-  });
-  const [stdout, stderr, code] = await Promise.all([
-    new Response(proc.stdout).text(),
-    new Response(proc.stderr).text(),
-    proc.exited,
-  ]);
+  const [bin, ...args] = cmd;
+  const proc = spawn(bin!, args, { cwd: opts.cwd, stdio: ['ignore', 'pipe', 'pipe'] });
+  let stdout = '';
+  let stderr = '';
+  proc.stdout.setEncoding('utf8');
+  proc.stderr.setEncoding('utf8');
+  proc.stdout.on('data', (chunk: string) => (stdout += chunk));
+  proc.stderr.on('data', (chunk: string) => (stderr += chunk));
+  const code = await exited(proc, (message) => (stderr += message));
   return { stdout, stderr, code };
+}
+
+/**
+ * Exit code of a child, with a missing binary read as 127 rather than an
+ * unhandled 'error' event — callers probe for tools by checking the code.
+ */
+function exited(proc: ChildProcess, onSpawnError: (message: string) => void): Promise<number> {
+  return new Promise((resolve) => {
+    proc.once('error', (error) => {
+      onSpawnError(String(error));
+      resolve(127);
+    });
+    proc.once('close', (code) => resolve(code ?? 1));
+  });
 }
 
 /** Run a command and throw with the captured stderr when it fails. */
@@ -67,27 +85,24 @@ export async function ffmpeg(args: string[], what = 'ffmpeg'): Promise<RunResult
  * Yields exactly `frameBytes`-sized chunks in decode order.
  */
 export async function* rawFrames(args: string[], frameBytes: number): AsyncGenerator<Uint8Array> {
-  const proc = Bun.spawn({
-    cmd: [FFMPEG, '-hide_banner', '-loglevel', 'error', '-nostdin', ...args],
-    stdout: 'pipe',
-    stderr: 'pipe',
-    stdin: 'ignore',
+  const proc = spawn(FFMPEG, ['-hide_banner', '-loglevel', 'error', '-nostdin', ...args], {
+    stdio: ['ignore', 'pipe', 'pipe'],
   });
   // Drain stderr concurrently, otherwise a chatty ffmpeg can deadlock on a full pipe.
-  const stderrPromise = new Response(proc.stderr).text();
+  let stderr = '';
+  proc.stderr.setEncoding('utf8');
+  proc.stderr.on('data', (chunk: string) => (stderr += chunk));
+  const done = exited(proc, (message) => (stderr += message));
 
-  const reader = proc.stdout.getReader();
   let pending = new Uint8Array(frameBytes);
   let filled = 0;
 
   try {
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
+    for await (const chunk of proc.stdout as AsyncIterable<Uint8Array>) {
       let offset = 0;
-      while (offset < value.length) {
-        const take = Math.min(frameBytes - filled, value.length - offset);
-        pending.set(value.subarray(offset, offset + take), filled);
+      while (offset < chunk.length) {
+        const take = Math.min(frameBytes - filled, chunk.length - offset);
+        pending.set(chunk.subarray(offset, offset + take), filled);
         filled += take;
         offset += take;
         if (filled === frameBytes) {
@@ -97,12 +112,24 @@ export async function* rawFrames(args: string[], frameBytes: number): AsyncGener
         }
       }
     }
+  } catch (error) {
+    // A dead process closes stdout mid-iteration; report the ffmpeg failure,
+    // not the stream teardown it caused.
+    const code = await done;
+    if (code !== 0) {
+      throw new FfmpegError(
+        `ffmpeg raw pass failed (exit ${code}): ${lastLines(stderr, 4)}`,
+        code,
+        stderr,
+      );
+    }
+    throw error;
   } finally {
-    reader.cancel().catch(() => {});
+    // Reached with the pipe still open only when the consumer bailed early.
+    if (proc.exitCode === null) proc.kill();
   }
 
-  const code = await proc.exited;
-  const stderr = await stderrPromise;
+  const code = await done;
   if (code !== 0) {
     throw new FfmpegError(
       `ffmpeg raw pass failed (exit ${code}): ${lastLines(stderr, 4)}`,
@@ -116,7 +143,7 @@ export async function* rawFrames(args: string[], frameBytes: number): AsyncGener
 let cachedFont: string | null | undefined;
 export async function findFont(): Promise<string | null> {
   if (cachedFont !== undefined) return cachedFont;
-  const override = Bun.env.VIDIN_FONT;
+  const override = process.env.VIDIN_FONT;
   const candidates = [
     ...(override ? [override] : []),
     '/System/Library/Fonts/SFNSMono.ttf',
@@ -128,7 +155,7 @@ export async function findFont(): Promise<string | null> {
     '/usr/share/fonts/truetype/liberation/LiberationMono-Regular.ttf',
   ];
   for (const path of candidates) {
-    if (await Bun.file(path).exists()) {
+    if (existsSync(path)) {
       cachedFont = path;
       return cachedFont;
     }

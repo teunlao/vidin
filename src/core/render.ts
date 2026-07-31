@@ -8,7 +8,7 @@
  * left to a `-2` scale expression.
  */
 
-import { unlink } from 'node:fs/promises';
+import { unlink, writeFile } from 'node:fs/promises';
 import { ffmpeg, findFont } from './ffmpeg.ts';
 import type { Rect, SelectedFrame, VideoMeta } from './types.ts';
 
@@ -369,7 +369,7 @@ async function drawTextFile(
   expansion: 'none' | 'normal' = 'none',
 ): Promise<string> {
   await ensureFont();
-  await Bun.write(labelFile, text);
+  await writeFile(labelFile, text);
   const font = fontPath ? `fontfile='${fontPath}':` : '';
   return (
     `drawtext=${font}textfile='${labelFile}':expansion=${expansion}` +

@@ -1,3 +1,4 @@
+import { existsSync } from 'node:fs';
 import { mkdir } from 'node:fs/promises';
 import { basename, isAbsolute, join, resolve } from 'node:path';
 import { YTDLP, run } from './ffmpeg.ts';
@@ -15,7 +16,7 @@ export interface ResolvedSource {
 export async function resolveSource(input: string, workDir: string): Promise<ResolvedSource> {
   if (!isUrl(input)) {
     const path = isAbsolute(input) ? input : resolve(process.cwd(), input);
-    if (!(await Bun.file(path).exists())) {
+    if (!existsSync(path)) {
       throw new Error(`Video not found: ${path}`);
     }
     return { input, path, downloaded: false };
@@ -52,7 +53,7 @@ export async function resolveSource(input: string, workDir: string): Promise<Res
   }
 
   const path = result.stdout.trim().split('\n').filter(Boolean).pop();
-  if (!path || !(await Bun.file(path).exists())) {
+  if (!path || !existsSync(path)) {
     throw new Error(`yt-dlp reported no output file for ${input}`);
   }
   return { input, path, downloaded: true };

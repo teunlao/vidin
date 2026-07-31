@@ -1,4 +1,4 @@
-import { mkdir, rm } from 'node:fs/promises';
+import { mkdir, readdir, rm, stat, writeFile } from 'node:fs/promises';
 import { join, relative } from 'node:path';
 import { FFPROBE, assertToolchain, runOrThrow } from './ffmpeg.ts';
 import { resolveSource, sessionNameFor } from './ingest.ts';
@@ -96,7 +96,7 @@ export async function analyze(options: AnalyzeOptions): Promise<AnalyzeResult> {
       previousTimeMs: i > 0 ? selection.frames[i - 1]!.timeMs : null,
     });
     const dimensions = await imageSize(file);
-    const bytes = Bun.file(file).size;
+    const bytes = (await stat(file)).size;
     frames[i] = {
       ...frame,
       file: relative(dir, file),
@@ -142,8 +142,8 @@ export async function analyze(options: AnalyzeOptions): Promise<AnalyzeResult> {
   const report = buildReport(manifest);
   const reportPath = join(dir, 'REPORT.md');
   const manifestPath = join(dir, 'manifest.json');
-  await Bun.write(reportPath, report);
-  await Bun.write(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
+  await writeFile(reportPath, report);
+  await writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
   await rm(join(dir, '.cells'), { recursive: true, force: true });
 
   return { dir, reportPath, manifestPath, report, manifest };
@@ -200,7 +200,7 @@ export async function zoom(options: ZoomOptions): Promise<ZoomResult> {
     annotate: options.annotate ?? true,
   });
 
-  const files = [...new Bun.Glob('z*.webp').scanSync({ cwd: dir, absolute: true })].sort();
+  const files = await matching(dir, 'z', '.webp');
   const perFrame = visionTokens(size.width, size.height + labelHeight(size));
   return { dir, files, meta, approxTokens: perFrame * files.length };
 }
@@ -254,7 +254,7 @@ async function makeSheets(
     quality: profile.quality,
   });
 
-  const files = [...new Bun.Glob('sheet-*.webp').scanSync({ cwd: join(dir, 'sheets'), absolute: true })].sort();
+  const files = await matching(join(dir, 'sheets'), 'sheet-', '.webp');
   const sheets: SheetArtifact[] = [];
   for (let i = 0; i < files.length; i++) {
     const file = files[i]!;
@@ -266,11 +266,20 @@ async function makeSheets(
         .map((frame) => frame.index),
       width: dimensions.width,
       height: dimensions.height,
-      bytes: Bun.file(file).size,
+      bytes: (await stat(file)).size,
       approxTokens: visionTokens(dimensions.width, dimensions.height),
     });
   }
   return sheets;
+}
+
+/** Absolute paths of dir entries shaped `<prefix>*<suffix>`, sorted by name. */
+async function matching(dir: string, prefix: string, suffix: string): Promise<string[]> {
+  const entries = await readdir(dir);
+  return entries
+    .filter((name) => name.startsWith(prefix) && name.endsWith(suffix))
+    .sort()
+    .map((name) => join(dir, name));
 }
 
 async function imageSize(path: string): Promise<{ width: number; height: number }> {

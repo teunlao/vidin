@@ -11,6 +11,8 @@
 
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
+import { existsSync } from 'node:fs';
+import { readFile } from 'node:fs/promises';
 import { basename, dirname, join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { z } from 'zod';
@@ -51,7 +53,7 @@ export function createServer(): McpServer {
         'Frames are chosen adaptively: one is kept each time the screen changes and then settles, ' +
         'so a long recording of someone reading costs almost nothing while every real UI event is ' +
         'captured. Mouse movement alone never spends a frame. Each frame is annotated with a red ' +
-        'dashed box around what changed, a cyan crosshair on the pointer, and a timestamp bar. ' +
+        'dashed box around what changed and a timestamp bar. ' +
         'Returns the report text and one contact sheet image showing the whole video at a glance; ' +
         'open individual frame files (or call get_frames) only for the moments that matter.',
       inputSchema: {
@@ -77,7 +79,7 @@ export function createServer(): McpServer {
         sensitivity: z.number().min(0.05).max(50).optional()
           .describe(
             'Percent of the screen that must change to count as an event. Lower catches subtler ' +
-              'changes and produces more frames. Default 0.8.',
+              'changes and produces more frames. Default 0.4.',
           ),
         include_sheet: z.boolean().optional()
           .describe('Return the contact sheet as an image. Default true.'),
@@ -322,13 +324,12 @@ function sessionDir(session: string): string {
 
 async function loadManifest(session: string): Promise<Manifest> {
   const path = join(sessionDir(session), 'manifest.json');
-  const file = Bun.file(path);
-  if (!(await file.exists())) {
+  if (!existsSync(path)) {
     throw new Error(
       `No vidin session at ${session} (expected ${path}). Run analyze_video first.`,
     );
   }
-  return (await file.json()) as Manifest;
+  return JSON.parse(await readFile(path, 'utf8')) as Manifest;
 }
 
 function defaultOutDir(source: string): string {
@@ -337,10 +338,10 @@ function defaultOutDir(source: string): string {
 }
 
 async function imageContent(path: string): Promise<Content> {
-  const bytes = await Bun.file(path).arrayBuffer();
+  const bytes = await readFile(path);
   return {
     type: 'image',
-    data: Buffer.from(bytes).toString('base64'),
+    data: bytes.toString('base64'),
     mimeType: path.endsWith('.png') ? 'image/png' : 'image/webp',
   };
 }

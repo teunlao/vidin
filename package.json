@@ -1,18 +1,43 @@
 {
   "name": "vidin",
   "version": "0.1.0",
-  "description": "Turn a video (bug report, screen recording) into an agent-readable set of annotated keyframes",
+  "description": "Turn a video (bug report, screen recording) into an agent-readable set of annotated keyframes. CLI + MCP server; the only native dependency is ffmpeg.",
   "type": "module",
-  "bin": {
-    "vidin": "./bin/vidin.ts",
-    "vidin-mcp": "./bin/vidin-mcp.ts"
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/teunlao/vidin.git"
   },
+  "homepage": "https://github.com/teunlao/vidin#readme",
+  "bugs": "https://github.com/teunlao/vidin/issues",
+  "mcpName": "io.github.teunlao/vidin",
+  "keywords": [
+    "mcp",
+    "mcp-server",
+    "video",
+    "screen-recording",
+    "keyframes",
+    "ffmpeg",
+    "bug-report",
+    "claude",
+    "agent",
+    "vision"
+  ],
+  "bin": {
+    "vidin": "./dist/bin/vidin.js",
+    "vidin-mcp": "./dist/bin/vidin-mcp.js"
+  },
+  "files": [
+    "dist"
+  ],
   "scripts": {
     "vidin": "bun run bin/vidin.ts",
     "mcp": "bun run bin/vidin-mcp.ts",
     "typecheck": "bunx tsc --noEmit",
     "test": "bun test",
-    "fixture": "bun run scripts/make-fixture.ts"
+    "fixture": "bun run scripts/make-fixture.ts",
+    "build": "tsc -p tsconfig.build.json",
+    "prepack": "rm -rf dist && tsc -p tsconfig.build.json"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.30.0",
@@ -20,16 +45,12 @@
   },
   "devDependencies": {
     "@types/bun": "latest",
+    "@types/node": "^26.1.2",
     "typescript": "^7.0.2"
   },
   "engines": {
-    "bun": ">=1.1.0"
+    "node": ">=20.0.0"
   },
-  "files": [
-    "bin",
-    "src",
-    "README.md"
-  ],
   "overrides": {
     "zod": "$zod"
   }
