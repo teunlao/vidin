@@ -1,7 +1,7 @@
 {
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.teunlao/vidin",
-  "description": "Turn a screen recording into agent-readable annotated keyframes. MCP server + CLI on ffmpeg.",
+  "description": "Turn a screen recording into annotated keyframes a coding agent can read. MCP server + CLI.",
   "repository": {
     "url": "https://github.com/teunlao/vidin",
     "source": "github"

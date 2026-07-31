@@ -1,7 +1,7 @@
 {
   "name": "@teunlao/vidin",
   "version": "0.1.0",
-  "description": "Turn a video (bug report, screen recording) into an agent-readable set of annotated keyframes. CLI + MCP server; the only native dependency is ffmpeg.",
+  "description": "Turn a screen recording into annotated keyframes a coding agent can read. MCP server + CLI.",
   "type": "module",
   "license": "MIT",
   "repository": {
