@@ -1,0 +1,28 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.teunlao/vidin",
+  "description": "Turn a screen recording into agent-readable annotated keyframes. MCP server + CLI on ffmpeg.",
+  "repository": {
+    "url": "https://github.com/teunlao/vidin",
+    "source": "github"
+  },
+  "version": "0.1.0",
+  "packages": [
+    {
+      "registryType": "npm",
+      "identifier": "@teunlao/vidin",
+      "version": "0.1.0",
+      "runtimeHint": "npx",
+      "transport": {
+        "type": "stdio"
+      },
+      "packageArguments": [
+        {
+          "type": "positional",
+          "value": "mcp",
+          "description": "Start the MCP server on stdio"
+        }
+      ]
+    }
+  ]
+}
