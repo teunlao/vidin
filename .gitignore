@@ -6,3 +6,4 @@ fixtures/
 .vidin-tmp/
 .vidin/
 *.tgz
+dist/

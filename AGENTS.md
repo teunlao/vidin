@@ -9,23 +9,30 @@ read it before touching the selector.
 
 ```sh
 bun test              # full suite, ~17s; needs ffmpeg, builds the fixture on first run
-bunx tsc --noEmit     # typecheck (there is no build step; Bun runs .ts directly)
+bunx tsc --noEmit     # typecheck (development runs .ts directly, no build)
+bun run build         # tsc → dist/ — what npm ships; runs on plain Node ≥ 20
 bun run vidin <file>  # CLI: analyse a video into ./.vidin/<name>/
 bun run mcp           # MCP server on stdio
 bun run fixture       # regenerate fixtures/screen-bug.mp4 (synthetic, scripted timeline)
 ```
 
-Toolchain: Bun ≥ 1.1 and `ffmpeg`/`ffprobe` on PATH. `yt-dlp` is needed only
-for URL input.
+Toolchain: Bun ≥ 1.1 (development only) and `ffmpeg`/`ffprobe` on PATH.
+`yt-dlp` is needed only for URL input. The published package targets Node ≥ 20
+via `npx vidin`; end users never need Bun.
 
 ## Hard rules
 
+- **No Bun APIs in `src/` or `bin/`.** The npm package runs under whatever
+  `npx` resolves to, so runtime code uses `node:` APIs exclusively. Bun (which
+  implements them) is the dev runner; `Bun.*` is allowed only in `scripts/` and
+  `test/`.
 - **No image libraries.** All drawing (change boxes, labels, contact sheets) is
   ffmpeg filters in `src/core/render.ts`. Do not add sharp/canvas/jimp —
   keeping ffmpeg the only native dependency is a design goal, not an accident.
 - **Runtime dependencies stay at two:** `@modelcontextprotocol/sdk` and `zod`.
   Adding one is a design decision to raise, not a convenience.
-- Imports carry explicit `.ts` extensions; ESM only.
+- Imports carry explicit `.ts` extensions; ESM only. `tsconfig.build.json`
+  rewrites them to `.js` when emitting `dist/`.
 
 ## Selector invariants (`src/core/select.ts`)
 
