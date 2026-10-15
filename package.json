@@ -1,6 +1,6 @@
 {
   "name": "@teunlao/vidin",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Turn a screen recording into annotated keyframes a coding agent can read. MCP server + CLI.",
   "type": "module",
   "license": "MIT",

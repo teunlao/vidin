@@ -45,6 +45,19 @@ test('the server advertises the progressive-refinement toolset', async () => {
   ]);
 });
 
+test('`vidin mcp`, the command the README installs, keeps serving after connect', async () => {
+  const viaCli = new Client({ name: 'vidin-test-cli', version: '0' });
+  await viaCli.connect(
+    new StdioClientTransport({ command: 'bun', args: [join(ROOT, 'bin', 'vidin.ts'), 'mcp'], cwd: ROOT }),
+  );
+  try {
+    const { tools } = await viaCli.listTools();
+    expect(tools.length).toBe(4);
+  } finally {
+    await viaCli.close();
+  }
+}, 60_000);
+
 test('analyze_video returns a readable report and a contact sheet image', async () => {
   const result = (await client.callTool({
     name: 'analyze_video',

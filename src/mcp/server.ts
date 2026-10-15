@@ -293,9 +293,16 @@ export function createServer(): McpServer {
   return server;
 }
 
+/** Resolves only once the client has gone, so a caller may exit on return. */
 export async function startServer(): Promise<void> {
   const server = createServer();
+  const gone = new Promise<void>((resolve) => {
+    process.stdin.once('end', resolve);
+    process.stdin.once('close', resolve);
+    server.server.onclose = resolve;
+  });
   await server.connect(new StdioServerTransport());
+  await gone;
 }
 
 /* ------------------------------------------------------------- internals */

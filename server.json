@@ -6,12 +6,12 @@
     "url": "https://github.com/teunlao/vidin",
     "source": "github"
   },
-  "version": "0.1.0",
+  "version": "0.1.1",
   "packages": [
     {
       "registryType": "npm",
       "identifier": "@teunlao/vidin",
-      "version": "0.1.0",
+      "version": "0.1.1",
       "runtimeHint": "npx",
       "transport": {
         "type": "stdio"
